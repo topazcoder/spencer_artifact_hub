@@ -4,6 +4,7 @@ import {
   type ArtifactAccess,
   ErrorCode,
   type SetCompanyAccessOptions,
+  type SetShareLinkOptions,
   type SharePeopleOptions,
   type UnknownRecipientsDetails,
   type UpdatePersonAccessOptions,
@@ -17,14 +18,16 @@ import { ArtifactsService } from '../artifacts/artifacts.service.js';
 import type { Actor } from '../auth/auth.types.js';
 import { AppError } from '../common/errors/app-error.js';
 import { User } from '../users/user.entity.js';
+import { ShareLinksService } from './links/share-links.service.js';
 import { Share, toSharedPersonDto } from './share.entity.js';
 
 const idSchema = z.guid();
 
 /**
- * Who besides the owner may see an artifact (plan §1, §4): everyone at the company, and
- * people by name, each showing the latest version or a pinned one. Owner only. Whether access
- * is granted is decided per request by `AccessPolicy`, so every change takes effect at once.
+ * Who besides the owner may see an artifact (plan §1, §4): people by name, everyone at the
+ * company, and anyone with the link; each shows all versions or a pinned one. Owner only.
+ * Whether access is granted is decided per request by `AccessPolicy`, so every change takes
+ * effect at once.
  */
 @Injectable()
 export class SharingService {
@@ -34,6 +37,7 @@ export class SharingService {
     @InjectRepository(ArtifactVersion) private readonly versions: Repository<ArtifactVersion>,
     @InjectRepository(User) private readonly users: Repository<User>,
     private readonly artifactsService: ArtifactsService,
+    private readonly links: ShareLinksService,
     @InjectPinoLogger(SharingService.name) private readonly logger: PinoLogger,
   ) {}
 
@@ -173,6 +177,40 @@ export class SharingService {
     return this.accessOf(artifact.id);
   }
 
+  /**
+   * Turns on the link for people outside the company (no sign-in, view and download), or
+   * changes its expiry or version while keeping its URL.
+   */
+  async setLink(
+    actor: Actor,
+    artifactId: string,
+    { expiresAt, versionNo }: SetShareLinkOptions,
+  ): Promise<ArtifactAccess> {
+    const artifact = await this.artifactToShare(actor, artifactId);
+    const expiry = expiresAt === null ? null : new Date(expiresAt);
+    if (expiry && expiry.getTime() <= Date.now()) {
+      throw new AppError(ErrorCode.VALIDATION_FAILED, 'The request is invalid.', [
+        { path: 'expiresAt', message: 'Choose an expiry date in the future.' },
+      ]);
+    }
+    const pinnedVersion = await this.versionToPin(artifact.id, versionNo);
+    await this.links.set(actor.userId, artifact.id, { expiresAt: expiry, pinnedVersion });
+    return this.accessOf(artifact.id);
+  }
+
+  async turnOffLink(actor: Actor, artifactId: string): Promise<ArtifactAccess> {
+    const artifact = await this.artifactToShare(actor, artifactId);
+    await this.links.turnOff(actor.userId, artifact.id);
+    return this.accessOf(artifact.id);
+  }
+
+  /** Gives the link a new URL; the old one stops working. `NOT_FOUND` if it is off. */
+  async resetLink(actor: Actor, artifactId: string): Promise<ArtifactAccess> {
+    const artifact = await this.artifactToShare(actor, artifactId);
+    await this.links.reset(actor.userId, artifact.id);
+    return this.accessOf(artifact.id);
+  }
+
   /** The artifact, if the actor may share it (`NOT_FOUND` / `FORBIDDEN` otherwise). */
   private async artifactToShare(actor: Actor, artifactId: string): Promise<Artifact> {
     return (await this.artifactsService.getForAction(actor, artifactId, 'share')).artifact;
@@ -194,13 +232,14 @@ export class SharingService {
   }
 
   private async accessOf(artifactId: string): Promise<ArtifactAccess> {
-    const [artifact, people] = await Promise.all([
+    const [artifact, people, link] = await Promise.all([
       this.artifacts.findOneOrFail({ where: { id: artifactId } }),
       this.shares.find({
         where: { artifactId },
         relations: { user: true, pinnedVersion: true },
         order: { createdAt: 'ASC', userId: 'ASC' },
       }),
+      this.links.liveLinkOf(artifactId),
     ]);
     const companyPinned = artifact.publicPinnedVersionId
       ? await this.versions.findOneBy({ id: artifact.publicPinnedVersionId })
@@ -211,6 +250,7 @@ export class SharingService {
         pinnedVersionNo: companyPinned?.versionNo ?? null,
       },
       people: people.map(toSharedPersonDto),
+      link,
     };
   }
 }

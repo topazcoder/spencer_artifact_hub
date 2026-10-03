@@ -1,10 +1,23 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Put,
+} from '@nestjs/common';
 import {
   type ArtifactAccessResponse,
   type SetCompanyAccessOptions,
+  type SetShareLinkOptions,
   type SharePeopleOptions,
   type UpdatePersonAccessOptions,
   setCompanyAccessRequestSchema,
+  setShareLinkRequestSchema,
   sharePeopleRequestSchema,
   updatePersonAccessRequestSchema,
 } from '@artifact-hub/shared';
@@ -63,5 +76,33 @@ export class SharingController {
     @Param('userId') userId: string,
   ): Promise<ArtifactAccessResponse> {
     return { access: await this.sharing.removePerson(actor, artifactId, userId) };
+  }
+
+  /** Turns the link on, or changes its expiry or version; the URL stays the same. */
+  @Put('link')
+  async setLink(
+    @CurrentActor() actor: Actor,
+    @Param('id') artifactId: string,
+    @Body(new ZodValidationPipe(setShareLinkRequestSchema)) options: SetShareLinkOptions,
+  ): Promise<ArtifactAccessResponse> {
+    return { access: await this.sharing.setLink(actor, artifactId, options) };
+  }
+
+  @Delete('link')
+  async turnOffLink(
+    @CurrentActor() actor: Actor,
+    @Param('id') artifactId: string,
+  ): Promise<ArtifactAccessResponse> {
+    return { access: await this.sharing.turnOffLink(actor, artifactId) };
+  }
+
+  /** A new URL for the link; the old one stops working. */
+  @Post('link/reset')
+  @HttpCode(HttpStatus.OK)
+  async resetLink(
+    @CurrentActor() actor: Actor,
+    @Param('id') artifactId: string,
+  ): Promise<ArtifactAccessResponse> {
+    return { access: await this.sharing.resetLink(actor, artifactId) };
   }
 }

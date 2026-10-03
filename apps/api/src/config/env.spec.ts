@@ -6,6 +6,7 @@ const PROD = {
   APP_BASE_URL: 'https://hub.example.com',
   DATABASE_URL,
   STORAGE_LOCAL_ROOT: '/data/blobs',
+  SHARE_LINK_KEY: Buffer.alloc(32, 7).toString('base64'),
 };
 
 describe('parseEnv', () => {
@@ -23,9 +24,11 @@ describe('parseEnv', () => {
       RATE_LIMIT_LOGIN_PER_EMAIL: 10,
       RATE_LIMIT_LOGIN_WINDOW_SECONDS: 900,
       RATE_LIMIT_USER_SEARCH_PER_MINUTE: 60,
+      RATE_LIMIT_SHARE_LINK_PER_MINUTE: 120,
       STORAGE_DRIVER: 'local',
       STORAGE_LOCAL_ROOT: '.data/blobs',
       MAX_ARTIFACT_BYTES: 10_485_760,
+      SHARE_LINK_KEY: Buffer.from('dev-only-share-link-key-32-bytes').toString('base64'),
     });
   });
 
@@ -63,6 +66,13 @@ describe('parseEnv', () => {
       /STORAGE_LOCAL_ROOT/,
     );
     expect(parseEnv(PROD).STORAGE_LOCAL_ROOT).toBe('/data/blobs');
+  });
+
+  it('requires a 32-byte SHARE_LINK_KEY in production', () => {
+    expect(() => parseEnv({ ...PROD, SHARE_LINK_KEY: undefined })).toThrow(/SHARE_LINK_KEY/);
+    const short = Buffer.alloc(16).toString('base64');
+    expect(() => parseEnv({ ...PROD, SHARE_LINK_KEY: short })).toThrow(/32 bytes/);
+    expect(parseEnv(PROD).SHARE_LINK_KEY).toBe(PROD.SHARE_LINK_KEY);
   });
 
   it('rejects unknown storage drivers', () => {

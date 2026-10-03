@@ -45,7 +45,7 @@ The schema changes only through migrations (`synchronize: false`). From `apps/ap
 
 ## Production image
 
-`docker/Dockerfile` builds the shared package, the SPA and the API into one image that runs as a non-root user, applies migrations on start and serves the SPA (`WEB_DIST_DIR`) next to `/api`. Required env: `DATABASE_URL`, `APP_BASE_URL`.
+`docker/Dockerfile` builds the shared package, the SPA and the API into one image that runs as a non-root user, applies migrations on start and serves the SPA (`WEB_DIST_DIR`) next to `/api`. Required env: `DATABASE_URL`, `APP_BASE_URL`, `SHARE_LINK_KEY` (`openssl rand -base64 32`).
 
 ```sh
 docker build -f docker/Dockerfile -t artifact-hub .

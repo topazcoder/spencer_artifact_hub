@@ -1,6 +1,7 @@
 import {
   type ArtifactAccess,
   type SetCompanyAccessRequest,
+  type SetShareLinkRequest,
   type SharePeopleRequest,
   type UpdatePersonAccessRequest,
   USER_SEARCH_MIN_LENGTH,
@@ -13,8 +14,13 @@ import {
   fetchAccess,
   removePerson,
   searchUsers,
+  fetchSharedArtifact,
+  resetShareLink,
   setCompanyAccess,
+  setShareLink,
+  sharedArtifactQueryKey,
   sharePeople,
+  turnOffShareLink,
   updatePerson,
   userSearchQueryKey,
 } from './sharing-api.ts';
@@ -63,6 +69,27 @@ export function useUpdatePerson(artifactId: string) {
 
 export function useRemovePerson(artifactId: string) {
   return useAccessChange(artifactId, (userId: string) => removePerson(artifactId, userId));
+}
+
+export function useSetShareLink(artifactId: string) {
+  return useAccessChange(artifactId, (body: SetShareLinkRequest) => setShareLink(artifactId, body));
+}
+
+export function useTurnOffShareLink(artifactId: string) {
+  return useAccessChange(artifactId, () => turnOffShareLink(artifactId));
+}
+
+export function useResetShareLink(artifactId: string) {
+  return useAccessChange(artifactId, () => resetShareLink(artifactId));
+}
+
+/** What a share link shows; a link that doesn't work won't start working on a retry. */
+export function useSharedArtifact(token: string) {
+  return useQuery({
+    queryKey: sharedArtifactQueryKey(token),
+    queryFn: ({ signal }) => fetchSharedArtifact(token, signal),
+    retry: false,
+  });
 }
 
 /** Suggestions for the people picker, once the user pauses typing 3+ characters. */

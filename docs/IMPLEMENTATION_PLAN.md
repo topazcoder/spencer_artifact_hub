@@ -214,7 +214,7 @@ The web UI and MCP use the same pipeline:
 
 ## 7. Viewing user content safely
 
-- The content endpoint is `GET /api/artifacts/:id/versions/:no/content`. It is authenticated with the session cookie and passes through `AccessPolicy`.
+- The content endpoint is `GET /api/artifacts/:id/versions/:no/content`. It is authenticated with the session cookie and passes through `AccessPolicy`. Share links serve the version they show at `GET /api/s/:token/content`, without a session, after `AccessPolicy.linkDenialReason`, with the same headers plus `X-Robots-Tag: noindex`.
 - Response headers on every content response:
   - `X-Content-Type-Options: nosniff`
   - `Content-Security-Policy: sandbox allow-scripts allow-popups; default-src 'none'; …`. Without `allow-same-origin`, the document gets an opaque origin, so its scripts cannot read app cookies or call the API, even when the content URL is opened directly. Scripts, styles, fonts, images and media may load from external `https:` URLs (CDNs), so AI-generated HTML renders as intended; `connect-src`, `form-action`, `frame-src` and `base-uri` are `'none'`, and `frame-ancestors 'self'` lets only the app frame it. (Trade-off: viewing such a page can reach third-party hosts.)
@@ -329,7 +329,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 ## 10. Error handling and idempotency
 
 ### Errors
-- Domain errors are defined in `packages/shared` with stable codes: `NOT_FOUND`, `FORBIDDEN`, `VALIDATION_FAILED`, `ARTIFACT_TOO_LARGE`, `UNSUPPORTED_TYPE`, `UPLOAD_SESSION_EXPIRED`, `UPLOAD_SESSION_USED`, `SHARE_RECIPIENT_UNKNOWN` (422, lists the unknown emails), `SHARE_EXPIRED` / `SHARE_REVOKED` (410, step 14, so the link page can explain), `RATE_LIMITED`, `CONFLICT`, `AI_UNAVAILABLE`, ….
+- Domain errors are defined in `packages/shared` with stable codes: `NOT_FOUND`, `FORBIDDEN`, `VALIDATION_FAILED`, `ARTIFACT_TOO_LARGE`, `UNSUPPORTED_TYPE`, `UPLOAD_SESSION_EXPIRED`, `UPLOAD_SESSION_USED`, `SHARE_RECIPIENT_UNKNOWN` (422, lists the unknown emails), `SHARE_EXPIRED` / `SHARE_REVOKED` (410, so the link page can explain), `RATE_LIMITED`, `CONFLICT`, `AI_UNAVAILABLE`, ….
 - A global exception filter maps them to HTTP status + `{ error: { code, message, details?, requestId } }`. The MCP adapter maps them to `isError` tool results.
 - Unknown errors are logged with stack and request ID; the client sees a generic message plus the `requestId`.
 - The web UI uses typed API client errors with toasts / inline form errors and retry on network failures for idempotent calls.
@@ -447,7 +447,7 @@ POST   /mcp
 | Login / Signup | Simple, one demo account hint on the login page |
 | **Gallery** (home) | Tabs: *Mine* (default) · *Shared with me* · *Company*, as `?scope=mine|shared|public`. Card grid with live thumbnails (image / first PDF page via `<img>`/iframe preview, HTML in a scaled sandboxed iframe), type badge, tags, owner, open-comment count, updated time. NL search bar + tag/type filters |
 | **Artifact page** | Large viewer on the left; right panel tabs: *Feedback* (AI summary at top, threads with replies, resolve, version filter "this version / all versions"), *Versions* (list, switch, change notes), *Details* (metadata, edit if owner). Header actions: Share, Upload new version, Download, Open full screen |
-| **Share dialog** | A one-line summary of who can see it ("Only you can see it", "You and 2 people…", "Everyone at the company…"), then one tab per kind of access, each opening with a sentence on who it reaches. **People** (count badge): add by email with autocomplete of existing users, *Can view* / *Can comment*, version; list with change and remove. **Company** (*On* badge): switch + version. **Link** (step 14): switch, expiry (1 / 7 / 30 days, never), version, Copy and Reset link. Versions read *All versions* (follows the latest, history included) or *Only vN*. Changes save as they are made. Footer: *Copy link* (the artifact's own URL, for signed-in colleagues) |
+| **Share dialog** | A one-line summary of who can see it, widest audience first ("Anyone with the link…", "Everyone at the company…", "You and 2 people…", "Only you can see it"), then one tab per kind of access, each opening with a sentence on who it reaches. **People** (count badge): add by email with autocomplete of existing users, *Can view* / *Can comment*, version; list with change and remove. **Company** (*On* badge): switch + version. **Link** (step 14): switch, expiry (1 / 7 / 30 days, never), version, Copy and Reset link. Versions read *All versions* (follows the latest, history included) or *Only vN*. Changes save as they are made. Footer: *Copy link* (the artifact's own URL, for signed-in colleagues) on the People and Company tabs; the Link tab copies its own link |
 | **Publish dialog** | Drag-and-drop → AI pre-fill → edit → publish. Artifacts start private; access is set in the share dialog |
 | **Upload page** (`/upload/:token`) | Landing page for the MCP binary flow: shows the artifact name the agent created, a drop zone, and a success state ("You can return to your conversation") |
 | **Settings** | API tokens + ready-to-copy Claude Desktop config |
@@ -477,13 +477,14 @@ SESSION_TTL_DAYS=7, COOKIE_SECURE=true
 STORAGE_DRIVER=local, STORAGE_LOCAL_ROOT=/data/blobs
   (s3: S3_BUCKET, S3_REGION, S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY)
   (azure: AZURE_STORAGE_CONNECTION_STRING, AZURE_CONTAINER)
-SHARE_LINK_KEY                     (step 14: 32 bytes, base64; encrypts share link tokens)
+SHARE_LINK_KEY                     (32 bytes, base64: `openssl rand -base64 32`; encrypts share link tokens; required in production, a fixed dev-only key otherwise)
 MAX_ARTIFACT_BYTES=10485760
 UPLOAD_SESSION_TTL_MINUTES=30
 AI_ENABLED=true, ANTHROPIC_API_KEY, AI_MODEL_FAST, AI_MODEL_SMART  (all optional; app runs without them)
 AI_TIMEOUT_MS=8000, AI_CIRCUIT_FAILURE_THRESHOLD=5, AI_CIRCUIT_COOLDOWN_SECONDS=60
 RATE_LIMIT_LOGIN_PER_IP=20, RATE_LIMIT_LOGIN_PER_EMAIL=10, RATE_LIMIT_LOGIN_WINDOW_SECONDS=900
 RATE_LIMIT_USER_SEARCH_PER_MINUTE=60   (per user, share dialog autocomplete)
+RATE_LIMIT_SHARE_LINK_PER_MINUTE=120   (per client IP, share link page and content)
 RATE_LIMIT_* (upload, ai: added with those features)
 SEED_DEMO=true
 ```
@@ -538,7 +539,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 **Access and sharing**
 12. ✅ Public visibility and the *All public* tab, plus the full `AccessPolicy` test matrix. (Step 13 renames the tab *Company* and moves the visibility choice into the share dialog.)
 13. ✅ Sharing inside the company: people (view/comment) and *Everyone at the company*, each with a pinned or latest version; the share dialog; *Shared with me*. (Replaces a first version with signed-in link shares, dropped for this simpler model.)
-14. *Anyone with the link* without sign-in: one link per artifact, expiry, reset, encrypted token, and the public `/s/:token` viewer with download.
+14. ✅ *Anyone with the link* without sign-in: one link per artifact, expiry, reset, encrypted token, and the public `/s/:token` viewer with download.
 15. Plain full-text search and filters in the gallery.
 
 **Comments**

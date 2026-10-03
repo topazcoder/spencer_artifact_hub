@@ -103,7 +103,8 @@ export async function deleteArtifact(id: string): Promise<void> {
   await apiRequest(artifactPath(id), { method: 'DELETE' });
 }
 
-function contentPath(artifactId: string, versionNo: number): string {
+/** Where a version's bytes are, relative to `/api`. */
+export function artifactContentPath(artifactId: string, versionNo: number): string {
   return `${artifactPath(artifactId)}/versions/${versionNo}/content`;
 }
 
@@ -113,22 +114,19 @@ export function artifactContentUrl(
   versionNo: number,
   { download = false } = {},
 ): string {
-  return `/api${contentPath(artifactId, versionNo)}${download ? '?download=1' : ''}`;
+  return `/api${artifactContentPath(artifactId, versionNo)}${download ? '?download=1' : ''}`;
 }
 
-export async function fetchArtifactText(
-  artifactId: string,
-  versionNo: number,
-  signal?: AbortSignal,
-): Promise<string> {
-  return (await apiFetchContent(contentPath(artifactId, versionNo), { signal })).text();
+/** Content (at a path relative to `/api`) as text, e.g. Markdown. */
+export async function fetchContentText(contentPath: string, signal?: AbortSignal): Promise<string> {
+  return (await apiFetchContent(contentPath, { signal })).text();
 }
 
-export async function fetchArtifactBytes(
-  artifactId: string,
-  versionNo: number,
+/** Content (at a path relative to `/api`) as bytes, e.g. a PDF. */
+export async function fetchContentBytes(
+  contentPath: string,
   signal?: AbortSignal,
 ): Promise<Uint8Array> {
-  const res = await apiFetchContent(contentPath(artifactId, versionNo), { signal });
+  const res = await apiFetchContent(contentPath, { signal });
   return new Uint8Array(await res.arrayBuffer());
 }

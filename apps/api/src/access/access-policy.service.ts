@@ -4,7 +4,13 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Brackets, type ObjectLiteral, type SelectQueryBuilder } from 'typeorm';
 import type { Actor } from '../auth/auth.types.js';
 import { AppError } from '../common/errors/app-error.js';
-import type { AccessAction, AccessTarget, DenialReason } from './access.types.js';
+import type {
+  AccessAction,
+  AccessTarget,
+  DenialReason,
+  LinkDenialReason,
+  LinkTarget,
+} from './access.types.js';
 
 export const ARTIFACT_NOT_FOUND_MESSAGE = 'Artifact not found.';
 
@@ -22,7 +28,9 @@ const OWNER_ONLY_ACTIONS: ReadonlySet<AccessAction> = new Set(['edit', 'share', 
  * - Company access and each share show the latest version or one pinned version.
  * - Nobody else gets anything. Deleted artifacts are gone for everyone.
  *
- * Links that work without signing in are checked by their own endpoints (step 14).
+ * A share link lets anyone who has it view and download one version, without signing in, while
+ * it is live (`linkDenialReason`). It is checked by the link's own endpoints only, and never
+ * grants anything inside the app.
  */
 @Injectable()
 export class AccessPolicyService {
@@ -78,6 +86,14 @@ export class AccessPolicyService {
       pinned.add(versionId);
     }
     return pinned;
+  }
+
+  /** Why `link` no longer opens its artifact, or null while it does. */
+  linkDenialReason(link: LinkTarget, now: Date = new Date()): LinkDenialReason | null {
+    if (link.artifact.deletedAt || link.artifact.status !== 'published') return 'artifact_gone';
+    if (link.revokedAt) return 'revoked';
+    if (link.expiresAt && link.expiresAt <= now) return 'expired';
+    return null;
   }
 
   /**

@@ -5,10 +5,13 @@ import { ArtifactPage } from './artifact-page.tsx';
 import { GalleryPage } from './gallery-page.tsx';
 import { LoginPage } from './login-page.tsx';
 import { NotFoundPage } from './not-found-page.tsx';
+import { SharedLinkPage } from './shared-link-page.tsx';
 import { SignupPage } from './signup-page.tsx';
 
-/** Everything requires a session except login and signup. */
+/** Everything requires a session except login, signup and share links. */
 export const routes: RouteObject[] = [
+  // Works signed in or not: share links are for people without an account too.
+  { path: '/s/:token', element: <SharedLinkPage /> },
   {
     element: <GuestOnly />,
     children: [

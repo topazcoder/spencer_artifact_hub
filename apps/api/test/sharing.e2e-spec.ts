@@ -129,6 +129,7 @@ describe('Sharing (e2e)', () => {
       expect(accessOf(await getAccess(ada, id).expect(200))).toEqual({
         company: { enabled: false, pinnedVersionNo: null },
         people: [],
+        link: null,
       });
     });
 

@@ -3,7 +3,7 @@ import type { PinoLogger } from 'nestjs-pino';
 import { Brackets, type SelectQueryBuilder, type WhereExpressionBuilder } from 'typeorm';
 import type { Actor } from '../auth/auth.types.js';
 import { AccessPolicyService } from './access-policy.service.js';
-import type { AccessAction, AccessGrant, AccessTarget } from './access.types.js';
+import type { AccessAction, AccessGrant, AccessTarget, LinkTarget } from './access.types.js';
 
 const OWNER_ID = '00000000-0000-4000-8000-000000000001';
 const OTHER_ID = '00000000-0000-4000-8000-000000000002';
@@ -41,6 +41,16 @@ function grant(
 /** A private artifact shared with the actor through `grants`. */
 function shared(...grants: AccessGrant[]): AccessTarget {
   return artifact({ grants });
+}
+
+const LINK_NOW = new Date('2026-10-03T12:00:00Z');
+function link(overrides: Partial<LinkTarget> = {}): LinkTarget {
+  return {
+    revokedAt: null,
+    expiresAt: null,
+    artifact: { deletedAt: null, status: 'published' },
+    ...overrides,
+  };
 }
 
 type Role = 'owner' | 'other' | 'view share' | 'comment share';
@@ -242,6 +252,27 @@ describe('AccessPolicyService', () => {
       expect(policy.visibleVersionIds(actor(OTHER_ID), artifact())).toEqual(new Set());
       const deleted = artifact({ deletedAt: new Date(), grants: [grant('view')] });
       expect(policy.visibleVersionIds(actor(OTHER_ID), deleted)).toEqual(new Set());
+    });
+  });
+
+  describe('linkDenialReason', () => {
+    it.each([
+      ['a live link without expiry', link(), null],
+      ['a link expiring later', link({ expiresAt: new Date('2026-10-04T00:00:00Z') }), null],
+      ['an expired link', link({ expiresAt: LINK_NOW }), 'expired'],
+      ['a turned-off link', link({ revokedAt: LINK_NOW }), 'revoked'],
+      [
+        'a link to a deleted artifact',
+        link({ revokedAt: LINK_NOW, artifact: { deletedAt: LINK_NOW, status: 'published' } }),
+        'artifact_gone',
+      ],
+      [
+        'a link to a draft',
+        link({ artifact: { deletedAt: null, status: 'draft' } }),
+        'artifact_gone',
+      ],
+    ])('%s → %s', (_, target, reason) => {
+      expect(policy.linkDenialReason(target, LINK_NOW)).toBe(reason);
     });
   });
 

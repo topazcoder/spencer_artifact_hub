@@ -4,7 +4,7 @@ import { getDocument, GlobalWorkerOptions, type PDFDocumentLoadingTask } from 'p
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { useEffect, useRef, useState } from 'react';
 import { isApiError } from '@/lib/api/api-error.ts';
-import { fetchArtifactBytes } from '../artifacts-api.ts';
+import { fetchContentBytes } from '../artifacts-api.ts';
 import { InlineError, InlineLoading } from '@/components/inline-status.tsx';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -23,21 +23,13 @@ type PdfState =
  * the document's own JavaScript (and since v6 doesn't use `eval` either). Loaded lazily
  * (default export for `React.lazy`), so pdf.js is only downloaded for PDFs.
  */
-export default function PdfViewer(props: { artifactId: string; versionNo: number }) {
+export default function PdfViewer(props: { contentPath: string }) {
   // "Try again" remounts the document with a fresh state.
   const [attempt, setAttempt] = useState(0);
   return <PdfDocument key={attempt} {...props} onRetry={() => setAttempt((n) => n + 1)} />;
 }
 
-function PdfDocument({
-  artifactId,
-  versionNo,
-  onRetry,
-}: {
-  artifactId: string;
-  versionNo: number;
-  onRetry: () => void;
-}) {
+function PdfDocument({ contentPath, onRetry }: { contentPath: string; onRetry: () => void }) {
   const pagesRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<PdfState>({ status: 'loading' });
 
@@ -50,7 +42,7 @@ function PdfDocument({
     container.replaceChildren();
 
     (async () => {
-      const data = await fetchArtifactBytes(artifactId, versionNo, controller.signal);
+      const data = await fetchContentBytes(contentPath, controller.signal);
       task = getDocument({ data });
       const doc = await task.promise;
       setState({ status: 'ready', pageCount: doc.numPages });
@@ -78,7 +70,7 @@ function PdfDocument({
       controller.abort();
       void task?.destroy();
     };
-  }, [artifactId, versionNo]);
+  }, [contentPath]);
 
   return (
     <div className="relative size-full overflow-auto bg-muted">

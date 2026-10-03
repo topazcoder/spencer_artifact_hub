@@ -14,7 +14,7 @@ import { renderApp } from '@/test/render-app.tsx';
 
 // pdf.js needs a real canvas; the page only has to pick the PDF viewer.
 vi.mock('./viewers/pdf-viewer.tsx', () => ({
-  default: ({ versionNo }: { versionNo: number }) => <p>PDF viewer for v{versionNo}</p>,
+  default: ({ contentPath }: { contentPath: string }) => <p>PDF viewer for {contentPath}</p>,
 }));
 
 function artifact(mimeType: ArtifactMimeType, overrides: Partial<Artifact> = {}): Artifact {
@@ -121,8 +121,11 @@ describe('artifact page', () => {
   });
 
   it('uses the PDF viewer for PDFs', async () => {
-    show(artifact('application/pdf'));
-    expect(await screen.findByText('PDF viewer for v2')).toBeTruthy();
+    const item = artifact('application/pdf');
+    show(item);
+    expect(
+      await screen.findByText(`PDF viewer for /artifacts/${item.id}/versions/2/content`),
+    ).toBeTruthy();
   });
 
   it('explains a draft that has no content yet', async () => {

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { artifactQueryKey, fetchArtifactText } from '../artifacts-api.ts';
+import { fetchContentText } from '../artifacts-api.ts';
 import { InlineError, InlineLoading } from '@/components/inline-status.tsx';
 
 /** Links leave the app in a new tab, without telling the target where they came from. */
@@ -15,16 +15,10 @@ const components: Components = {
  * links, so the content can't inject markup or scripts into the app. Loaded lazily (default
  * export for `React.lazy`), like the PDF viewer.
  */
-export default function MarkdownViewer({
-  artifactId,
-  versionNo,
-}: {
-  artifactId: string;
-  versionNo: number;
-}) {
+export default function MarkdownViewer({ contentPath }: { contentPath: string }) {
   const { data, error, refetch } = useQuery({
-    queryKey: [...artifactQueryKey(artifactId), 'versions', versionNo, 'text'],
-    queryFn: ({ signal }) => fetchArtifactText(artifactId, versionNo, signal),
+    queryKey: ['content', contentPath, 'text'],
+    queryFn: ({ signal }) => fetchContentText(contentPath, signal),
     // A version's content never changes.
     staleTime: Infinity,
   });

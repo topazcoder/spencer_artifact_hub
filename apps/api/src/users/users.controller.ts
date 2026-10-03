@@ -1,13 +1,12 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import {
   type UserSearchQuery,
   type UserSearchResponse,
   userSearchQuerySchema,
 } from '@artifact-hub/shared';
-import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
 import { CurrentActor } from '../auth/auth.decorators.js';
 import type { Actor } from '../auth/auth.types.js';
-import { LOGIN_THROTTLERS } from '../common/rate-limit/rate-limit.module.js';
+import { USER_SEARCH_THROTTLER, UseThrottlers } from '../common/rate-limit/rate-limit.module.js';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe.js';
 import { UsersService } from './users.service.js';
 
@@ -17,8 +16,7 @@ export class UsersController {
 
   /** Autocomplete for the share dialog. Rate limited per user (plan S19). */
   @Get('search')
-  @UseGuards(ThrottlerGuard)
-  @SkipThrottle(Object.fromEntries(LOGIN_THROTTLERS.map((name) => [name, true])))
+  @UseThrottlers(USER_SEARCH_THROTTLER)
   async search(
     @CurrentActor() actor: Actor,
     @Query(new ZodValidationPipe(userSearchQuerySchema)) { q }: UserSearchQuery,

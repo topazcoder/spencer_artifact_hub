@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button.tsx';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx';
 import { ArtifactDetails } from '@/features/artifacts/artifact-details.tsx';
 import { typeLabel } from '@/features/artifacts/artifact-types.ts';
-import { artifactContentUrl } from '@/features/artifacts/artifacts-api.ts';
+import { artifactContentPath, artifactContentUrl } from '@/features/artifacts/artifacts-api.ts';
 import { NewVersionDialog } from '@/features/artifacts/new-version-dialog.tsx';
 import { useArtifact, useArtifactVersions } from '@/features/artifacts/use-artifacts.ts';
 import { VersionList } from '@/features/artifacts/version-list.tsx';
@@ -170,7 +170,11 @@ function ArtifactView({ artifact }: { artifact: Artifact }) {
           className="h-[75vh] overflow-hidden rounded-xl border bg-background [&:fullscreen]:h-screen [&:fullscreen]:rounded-none [&:fullscreen]:border-0"
         >
           {version ? (
-            <ArtifactViewer artifact={artifact} version={version} />
+            <ArtifactViewer
+              title={artifact.title}
+              version={version}
+              contentPath={artifactContentPath(artifact.id, version.versionNo)}
+            />
           ) : version === undefined ? (
             <InlineLoading />
           ) : current ? (

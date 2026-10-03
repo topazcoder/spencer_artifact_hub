@@ -25,6 +25,19 @@ export interface AccessGrant {
   pinnedVersionId: string | null;
 }
 
+/** A share link, with what decides whether it still opens its artifact. */
+export interface LinkTarget {
+  revokedAt: Date | null;
+  expiresAt: Date | null;
+  artifact: { deletedAt: Date | null; status: ArtifactStatus };
+}
+
+/**
+ * Why a share link no longer opens its artifact: it was deleted or isn't published
+ * (`artifact_gone`), the link was turned off or reset (`revoked`), or it expired.
+ */
+export type LinkDenialReason = 'artifact_gone' | 'revoked' | 'expired';
+
 /**
  * Why access was denied; logged at debug, never shown to the caller. `private`: the actor has
  * no access at all; `owner_only`: they may view, but the action is the owner's; `view_only`:

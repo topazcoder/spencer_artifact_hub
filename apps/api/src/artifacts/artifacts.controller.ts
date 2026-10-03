@@ -1,4 +1,3 @@
-import { pipeline } from 'node:stream/promises';
 import {
   Body,
   Controller,
@@ -40,12 +39,7 @@ import { toArtifactVersionDto } from './artifact-version.entity.js';
 import { toArtifactDto } from './artifact.entity.js';
 import { ArtifactsService } from './artifacts.service.js';
 import type { ArtifactListOptions } from './artifacts.types.js';
-import { attachmentDisposition, downloadFilename } from './content/content-disposition.js';
-import {
-  CONTENT_SECURITY_HEADERS,
-  etagMatches,
-  servedContentType,
-} from './content/content-headers.js';
+import { sendVersionContent } from './content/send-version-content.js';
 
 /** What each gallery scope narrows the list to. */
 const SCOPE_FILTERS: Record<
@@ -129,11 +123,7 @@ export class ArtifactsController {
     return { items: items.map(toArtifactDto), page, pageSize, total };
   }
 
-  /**
-   * Streams a version's bytes with the sandbox headers (plan §7). `?download=1` saves it as a
-   * file. The ETag is the content hash, so revalidation is a 304 after the access check.
-   * Handles the response itself: Nest would reset a 304 to 200.
-   */
+  /** A version's bytes with the sandbox headers; `?download=1` saves it as a file. */
   @Get(':id/versions/:no/content')
   async content(
     @CurrentActor() actor: Actor,
@@ -143,34 +133,11 @@ export class ArtifactsController {
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
-    const { artifact, version, open } = await this.artifacts.getContent(actor, id, versionNo);
-    const etag = `"${version.sha256}"`;
-    res.set(CONTENT_SECURITY_HEADERS).set('ETag', etag);
-    if (etagMatches(req.get('If-None-Match'), etag)) {
-      res.status(304).end();
-      return;
-    }
-
-    const body = await open();
-    res.set({
-      'Content-Type': servedContentType(version.mimeType),
-      'Content-Length': String(version.sizeBytes),
-      'Content-Disposition':
-        download === '1'
-          ? attachmentDisposition(
-              downloadFilename(version.originalFilename, artifact.title, version.mimeType),
-            )
-          : 'inline',
+    const content = await this.artifacts.getContent(actor, id, versionNo);
+    await sendVersionContent(req, res, content, {
+      download: download === '1',
+      logger: this.logger,
     });
-    try {
-      await pipeline(body, res);
-    } catch (err) {
-      // Headers are sent by now; the client sees a truncated response.
-      this.logger.warn(
-        { err, artifactId: artifact.id, versionNo: version.versionNo },
-        'Content stream failed',
-      );
-    }
   }
 
   @Get(':id')

@@ -1,6 +1,5 @@
-import type { Artifact, ArtifactVersion } from '@artifact-hub/shared';
+import type { ArtifactVersion } from '@artifact-hub/shared';
 import { lazy, Suspense } from 'react';
-import { artifactContentUrl } from '../artifacts-api.ts';
 import { viewerKind } from '../artifact-types.ts';
 import { HtmlViewer } from './html-viewer.tsx';
 import { ImageViewer } from './image-viewer.tsx';
@@ -10,31 +9,36 @@ import { InlineLoading } from '@/components/inline-status.tsx';
 const MarkdownViewer = lazy(() => import('./markdown-viewer.tsx'));
 const PdfViewer = lazy(() => import('./pdf-viewer.tsx'));
 
-/** Shows a version with the safe viewer for its type. Fills its container. */
+/**
+ * Shows a version with the safe viewer for its type. Fills its container. `contentPath` is
+ * where its bytes are, relative to `/api` (in the app, or through a share link).
+ */
 export function ArtifactViewer({
-  artifact,
+  title,
   version,
+  contentPath,
 }: {
-  artifact: Pick<Artifact, 'id' | 'title'>;
+  title: string;
   version: ArtifactVersion;
+  contentPath: string;
 }) {
-  const src = artifactContentUrl(artifact.id, version.versionNo);
+  const src = `/api${contentPath}`;
 
   switch (viewerKind(version.mimeType)) {
     case 'iframe':
-      return <HtmlViewer src={src} title={artifact.title} />;
+      return <HtmlViewer src={src} title={title} />;
     case 'image':
-      return <ImageViewer src={src} alt={artifact.title} />;
+      return <ImageViewer src={src} alt={title} />;
     case 'markdown':
       return (
         <Suspense fallback={<InlineLoading />}>
-          <MarkdownViewer artifactId={artifact.id} versionNo={version.versionNo} />
+          <MarkdownViewer contentPath={contentPath} />
         </Suspense>
       );
     case 'pdf':
       return (
         <Suspense fallback={<InlineLoading />}>
-          <PdfViewer artifactId={artifact.id} versionNo={version.versionNo} />
+          <PdfViewer contentPath={contentPath} />
         </Suspense>
       );
   }

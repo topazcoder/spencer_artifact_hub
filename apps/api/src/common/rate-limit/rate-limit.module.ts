@@ -1,5 +1,5 @@
-import { Module } from '@nestjs/common';
-import { ThrottlerModule, seconds } from '@nestjs/throttler';
+import { applyDecorators, Module, UseGuards } from '@nestjs/common';
+import { SkipThrottle, ThrottlerGuard, ThrottlerModule, seconds } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { ENV } from '../../config/config.module.js';
 import type { Env } from '../../config/config.types.js';
@@ -7,9 +7,28 @@ import type { Env } from '../../config/config.types.js';
 export const LOGIN_IP_THROTTLER = 'login-ip';
 export const LOGIN_EMAIL_THROTTLER = 'login-email';
 export const USER_SEARCH_THROTTLER = 'user-search';
+export const SHARE_LINK_THROTTLER = 'share-link';
 
-/** Every login and signup throttler, for routes that only want the others. */
-export const LOGIN_THROTTLERS = [LOGIN_IP_THROTTLER, LOGIN_EMAIL_THROTTLER] as const;
+const THROTTLERS = [
+  LOGIN_IP_THROTTLER,
+  LOGIN_EMAIL_THROTTLER,
+  USER_SEARCH_THROTTLER,
+  SHARE_LINK_THROTTLER,
+] as const;
+
+type ThrottlerName = (typeof THROTTLERS)[number];
+
+/**
+ * Rate limits a route (or controller) with exactly the named throttlers. Every configured
+ * throttler applies to a throttled route unless skipped, so this skips all the others.
+ */
+export function UseThrottlers(...names: ThrottlerName[]) {
+  const skipped = THROTTLERS.filter((name) => !names.includes(name));
+  return applyDecorators(
+    UseGuards(ThrottlerGuard),
+    SkipThrottle(Object.fromEntries(skipped.map((name) => [name, true]))),
+  );
+}
 
 /** Counts attempts per submitted email, so spreading guesses over many IPs doesn't help. */
 function emailTracker(req: Record<string, unknown>): string {
@@ -26,8 +45,7 @@ function userTracker(req: Record<string, unknown>): string {
 
 /**
  * In-memory rate limits (one replica). `ThrottlerGuard` is not global: routes opt in with
- * `@UseGuards(ThrottlerGuard)`, and every throttler below applies to each of those routes
- * unless skipped with `@SkipThrottle`. Counters are kept per route.
+ * `@UseThrottlers(...)`, naming the throttlers that apply. Counters are kept per route.
  */
 @Module({
   imports: [
@@ -50,6 +68,11 @@ function userTracker(req: Record<string, unknown>): string {
               ttl: seconds(60),
               limit: env.RATE_LIMIT_USER_SEARCH_PER_MINUTE,
               getTracker: userTracker,
+            },
+            {
+              name: SHARE_LINK_THROTTLER,
+              ttl: seconds(60),
+              limit: env.RATE_LIMIT_SHARE_LINK_PER_MINUTE,
             },
           ],
         };

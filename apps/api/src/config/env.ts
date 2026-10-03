@@ -6,6 +6,10 @@ const DEV_APP_BASE_URL = 'http://localhost:5173';
 const DEV_DATABASE_URL = 'postgres://artifact_hub:artifact_hub@localhost:5432/artifact_hub';
 /** Relative to the API's working directory (`apps/api`), which git and Docker ignore. */
 const DEV_STORAGE_LOCAL_ROOT = '.data/blobs';
+/** A fixed key so links survive restarts in development and tests. Never used in production. */
+const DEV_SHARE_LINK_KEY = Buffer.from('dev-only-share-link-key-32-bytes').toString('base64');
+
+const SHARE_LINK_KEY_BYTES = 32;
 
 export const envSchema = z
   .object({
@@ -32,6 +36,20 @@ export const envSchema = z
     RATE_LIMIT_LOGIN_PER_EMAIL: z.coerce.number().int().min(1).default(10),
     RATE_LIMIT_LOGIN_WINDOW_SECONDS: z.coerce.number().int().min(1).default(900),
     RATE_LIMIT_USER_SEARCH_PER_MINUTE: z.coerce.number().int().min(1).default(60),
+    /** Requests per client IP to share link pages and their content, which need no sign-in. */
+    RATE_LIMIT_SHARE_LINK_PER_MINUTE: z.coerce.number().int().min(1).default(120),
+    /**
+     * 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts share link tokens so owners
+     * can copy their links again; links are looked up by hash, so a database leak alone exposes
+     * none. Changing it makes existing links uncopyable (they keep working). Required in
+     * production.
+     */
+    SHARE_LINK_KEY: z
+      .string()
+      .refine((key) => Buffer.from(key, 'base64').length === SHARE_LINK_KEY_BYTES, {
+        message: `Must be ${SHARE_LINK_KEY_BYTES} bytes, base64-encoded`,
+      })
+      .optional(),
     /** Where artifact content is stored. Only `local` is implemented; s3/azure are planned. */
     STORAGE_DRIVER: z.enum(['local', 's3', 'azure']).default('local'),
     /** Root directory of the `local` driver (a mounted volume in production). */
@@ -46,7 +64,7 @@ export const envSchema = z
   })
   .transform((env, ctx) => {
     if (env.NODE_ENV === 'production') {
-      for (const key of ['APP_BASE_URL', 'DATABASE_URL'] as const) {
+      for (const key of ['APP_BASE_URL', 'DATABASE_URL', 'SHARE_LINK_KEY'] as const) {
         if (!env[key])
           ctx.addIssue({ code: 'custom', path: [key], message: 'Required in production' });
       }
@@ -66,6 +84,7 @@ export const envSchema = z
       DATABASE_URL: env.DATABASE_URL ?? DEV_DATABASE_URL,
       COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
       STORAGE_LOCAL_ROOT: env.STORAGE_LOCAL_ROOT ?? DEV_STORAGE_LOCAL_ROOT,
+      SHARE_LINK_KEY: env.SHARE_LINK_KEY ?? DEV_SHARE_LINK_KEY,
     };
   });
 

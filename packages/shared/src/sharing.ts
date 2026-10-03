@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { artifactVersionSchema } from './artifacts.js';
 
 /** `comment` includes `view`. */
 export const SHARE_PERMISSIONS = ['view', 'comment'] as const;
@@ -21,6 +22,21 @@ export const sharedPersonSchema = z.object({
 
 export type SharedPerson = z.infer<typeof sharedPersonSchema>;
 
+/**
+ * The artifact's link for people outside the company: anyone who has it can view and download
+ * without signing in. Only the owner sees it, and can copy it any time.
+ */
+export const shareLinkSchema = z.object({
+  url: z.url(),
+  /** The only version it shows; null = all versions (following the latest). */
+  pinnedVersionNo: z.number().int().positive().nullable(),
+  /** When it stops working; null = never. May be in the past (expired, not yet turned off). */
+  expiresAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+});
+
+export type ShareLink = z.infer<typeof shareLinkSchema>;
+
 /** Who has access to an artifact besides its owner. Owner only. */
 export const artifactAccessSchema = z.object({
   /** Everyone at the company (signed in) can view and comment. */
@@ -30,6 +46,8 @@ export const artifactAccessSchema = z.object({
   }),
   /** In the order they were added. */
   people: z.array(sharedPersonSchema),
+  /** Null when there is no link (it was never turned on, or was turned off). */
+  link: shareLinkSchema.nullable(),
 });
 
 export type ArtifactAccess = z.infer<typeof artifactAccessSchema>;
@@ -64,6 +82,37 @@ export const sharePeopleRequestSchema = z.object({
 
 export type SharePeopleRequest = z.input<typeof sharePeopleRequestSchema>;
 export type SharePeopleOptions = z.output<typeof sharePeopleRequestSchema>;
+
+/**
+ * Body of `PUT /api/artifacts/:id/access/link`: turns the link on, or changes it while keeping
+ * its URL.
+ */
+export const setShareLinkRequestSchema = z.object({
+  /** Must be in the future; null = never expires. */
+  expiresAt: z.iso.datetime({ offset: true }).nullable().default(null),
+  versionNo: versionChoiceSchema.default(null),
+});
+
+export type SetShareLinkRequest = z.input<typeof setShareLinkRequestSchema>;
+export type SetShareLinkOptions = z.output<typeof setShareLinkRequestSchema>;
+
+/**
+ * Response of `GET /api/s/:token`, which needs no sign-in: just enough to show the shared
+ * version. The content is at `GET /api/s/:token/content`.
+ */
+export const sharedArtifactResponseSchema = z.object({
+  artifact: z.object({
+    /** Lets signed-in users with access open it in the app; grants nothing by itself. */
+    id: z.uuid(),
+    title: z.string(),
+    description: z.string(),
+    owner: z.object({ displayName: z.string() }),
+    version: artifactVersionSchema,
+  }),
+  expiresAt: z.iso.datetime().nullable(),
+});
+
+export type SharedArtifactResponse = z.infer<typeof sharedArtifactResponseSchema>;
 
 /** `details` of a `SHARE_RECIPIENT_UNKNOWN` error. */
 export const unknownRecipientsDetailsSchema = z.object({ unknownEmails: z.array(z.string()) });

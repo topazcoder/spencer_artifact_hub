@@ -35,6 +35,9 @@ const COMPANY_ROUTE = /^PUT \/api\/artifacts\/([^/?]+)\/access\/company$/;
 const PEOPLE_ROUTE = /^POST \/api\/artifacts\/([^/?]+)\/access\/people$/;
 const PERSON_ROUTE = /^(PATCH|DELETE) \/api\/artifacts\/([^/?]+)\/access\/people\/([^/?]+)$/;
 const USER_SEARCH_ROUTE = /^GET \/api\/users\/search\?(.*)$/;
+const LINK_ROUTE = /^(PUT|DELETE) \/api\/artifacts\/([^/?]+)\/access\/link$/;
+const LINK_RESET_ROUTE = /^POST \/api\/artifacts\/([^/?]+)\/access\/link\/reset$/;
+const SHARED_ROUTE = /^GET \/api\/s\/([^/?]+)(\/content)?(\?.*)?$/;
 
 const MIME_BY_EXTENSION: Record<string, ArtifactMimeType> = {
   html: 'text/html',
@@ -72,6 +75,8 @@ export function installFakeApi() {
   const publishedForms: FormData[] = [];
   /** Access settings by artifact id; artifacts without an entry are shared with nobody. */
   const access = new Map<string, ArtifactAccess>();
+  /** Every link token handed out, live or not. */
+  const linkTokens: { token: string; artifactId: string; revoked: boolean }[] = [];
   let nextPublishResponse: Response | null = null;
   let nextUpdateResponse: Response | null = null;
   let maxArtifactBytes = 10 * 1024 * 1024;
@@ -147,7 +152,52 @@ export function installFakeApi() {
   };
 
   const accessOf = (artifactId: string): ArtifactAccess =>
-    access.get(artifactId) ?? { company: { enabled: false, pinnedVersionNo: null }, people: [] };
+    access.get(artifactId) ?? {
+      company: { enabled: false, pinnedVersionNo: null },
+      people: [],
+      link: null,
+    };
+
+  /** A new live link for the artifact; the previous one, if any, stops working. */
+  const newLink = (
+    artifactId: string,
+    expiresAt: string | null,
+    pinnedVersionNo: number | null,
+  ): ArtifactAccess['link'] => {
+    for (const t of linkTokens) if (t.artifactId === artifactId) t.revoked = true;
+    const token = `link-${linkTokens.length + 1}`;
+    linkTokens.push({ token, artifactId, revoked: false });
+    return {
+      url: `http://localhost:5173/s/${token}`,
+      pinnedVersionNo,
+      expiresAt,
+      createdAt: new Date().toISOString(),
+    };
+  };
+
+  /** What a link shows, or why it doesn't. */
+  const openLink = (token: string, wantsContent: boolean): Response => {
+    const found = linkTokens.find((t) => t.token === token);
+    const stored = found && artifacts.get(found.artifactId);
+    if (!found || !stored) return error(404, ErrorCode.NOT_FOUND, "This link doesn't work.");
+    if (found.revoked) return error(410, ErrorCode.SHARE_REVOKED, 'This link was turned off.');
+    const link = accessOf(found.artifactId).link!;
+    if (link.expiresAt && link.expiresAt <= new Date().toISOString()) {
+      return error(410, ErrorCode.SHARE_EXPIRED, 'This link has expired.');
+    }
+    const version =
+      link.pinnedVersionNo === null
+        ? stored.artifact.currentVersion!
+        : stored.versions.find((v) => v.versionNo === link.pinnedVersionNo)!;
+    if (wantsContent) {
+      return new Response(stored.content.get(version.versionNo) ?? '', { status: 200 });
+    }
+    const { id, title, description, owner } = stored.artifact;
+    return json(200, {
+      artifact: { id, title, description, owner: { displayName: owner.displayName }, version },
+      expiresAt: link.expiresAt,
+    });
+  };
 
   const changeAccess = (artifactId: string, next: ArtifactAccess): Response => {
     access.set(artifactId, next);
@@ -264,6 +314,32 @@ export function installFakeApi() {
       }
       if (route.startsWith('POST')) return sharePeople(artifactId, body);
       return json(200, { access: accessOf(artifactId) });
+    }
+    const sharedMatch = SHARED_ROUTE.exec(route);
+    if (sharedMatch) {
+      return openLink(decodeURIComponent(sharedMatch[1] ?? ''), sharedMatch[2] !== undefined);
+    }
+    const linkMatch = LINK_ROUTE.exec(route) ?? LINK_RESET_ROUTE.exec(route);
+    if (linkMatch) {
+      const artifactId = decodeURIComponent(
+        (route.startsWith('POST') ? linkMatch[1] : linkMatch[2]) ?? '',
+      );
+      const current = accessOf(artifactId);
+      if (route.startsWith('DELETE')) {
+        for (const t of linkTokens) if (t.artifactId === artifactId) t.revoked = true;
+        return changeAccess(artifactId, { ...current, link: null });
+      }
+      if (route.startsWith('POST')) {
+        if (!current.link) return error(404, ErrorCode.NOT_FOUND, 'There is no link to reset.');
+        const link = newLink(artifactId, current.link.expiresAt, current.link.pinnedVersionNo);
+        return changeAccess(artifactId, { ...current, link });
+      }
+      const expiresAt = body.expiresAt ?? null;
+      const versionNo = body.versionNo ?? null;
+      const link = current.link
+        ? { ...current.link, expiresAt, pinnedVersionNo: versionNo }
+        : newLink(artifactId, expiresAt, versionNo);
+      return changeAccess(artifactId, { ...current, link });
     }
     const personMatch = PERSON_ROUTE.exec(route);
     if (personMatch) {
@@ -405,6 +481,21 @@ export function installFakeApi() {
         versions,
         content: new Map(versions.map((version) => [version.versionNo, content])),
       });
+    },
+    /**
+     * Turns on a link for the artifact, as if its owner had, and returns its token. `expired`
+     * makes it one that has expired; `revoked` one that was turned off.
+     */
+    addLink(artifactId: string, { expired = false, revoked = false } = {}): string {
+      const link = newLink(
+        artifactId,
+        expired ? new Date(Date.now() - 1000).toISOString() : null,
+        null,
+      );
+      const token = link!.url.slice(link!.url.lastIndexOf('/') + 1);
+      if (revoked) linkTokens.find((t) => t.token === token)!.revoked = true;
+      access.set(artifactId, { ...accessOf(artifactId), link: revoked ? null : link });
+      return token;
     },
     /** Who the artifact is shared with, as the fake server has it. */
     access(artifactId: string): ArtifactAccess {

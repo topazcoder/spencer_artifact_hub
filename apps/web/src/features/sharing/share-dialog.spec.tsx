@@ -33,6 +33,12 @@ function rows(dialog: HTMLElement) {
   return within(list).getAllByRole('listitem');
 }
 
+async function openLinkTab(item: Artifact) {
+  const opened = await openDialog(item);
+  await opened.user.click(within(opened.dialog).getByRole('tab', { name: /Link/ }));
+  return opened;
+}
+
 describe('share dialog', () => {
   let api: ReturnType<typeof installFakeApi>;
   let me: User;
@@ -198,10 +204,92 @@ describe('share dialog', () => {
     expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/artifacts/${item.id}`);
   });
 
+  it('offers the artifact link on the People and Company tabs only', async () => {
+    const { user, dialog } = await openDialog(artifact());
+    expect(within(dialog).getByRole('button', { name: 'Copy link' })).toBeTruthy();
+    await user.click(within(dialog).getByRole('tab', { name: 'Company' }));
+    expect(within(dialog).getByRole('button', { name: 'Copy link' })).toBeTruthy();
+    await user.click(within(dialog).getByRole('tab', { name: /Link/ }));
+    expect(within(dialog).queryByRole('button', { name: 'Copy link' })).toBeNull();
+  });
+
   it('is only offered to the owner', async () => {
     const item = artifact({ id: grace.id, displayName: grace.displayName });
     renderApp(`/artifacts/${item.id}`);
     expect(await screen.findByRole('heading', { name: 'Roadmap' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+  });
+
+  describe('link', () => {
+    const DAY = 24 * 60 * 60_000;
+
+    it('turns on a link that expires in 7 days and can be copied any time', async () => {
+      const item = artifact();
+      const { user, dialog } = await openLinkTab(item);
+      expect(within(dialog).getByText(/For people outside the company/)).toBeTruthy();
+      expect(within(dialog).getByText("Off: there's no link.")).toBeTruthy();
+
+      await user.click(within(dialog).getByRole('switch', { name: 'Anyone with the link' }));
+      const input = (await within(dialog).findByLabelText('Link URL')) as HTMLInputElement;
+      const { link } = api.access(item.id);
+      expect(input.value).toBe(link!.url);
+      expect(Math.abs(new Date(link!.expiresAt!).getTime() - Date.now() - 7 * DAY)).toBeLessThan(
+        60_000,
+      );
+      expect(
+        within(dialog).getByText('Anyone with the link can see it, without signing in.'),
+      ).toBeTruthy();
+      expect(within(dialog).getByRole('tab', { name: /Link/ }).textContent).toContain('On');
+
+      const writeText = vi.spyOn(navigator.clipboard, 'writeText');
+      await user.click(within(dialog).getByRole('button', { name: 'Copy' }));
+      expect(writeText).toHaveBeenCalledWith(link!.url);
+    });
+
+    it('changes expiry and version without changing the URL', async () => {
+      const item = artifact();
+      api.addLink(item.id);
+      const { url } = api.access(item.id).link!;
+      const { user, dialog } = await openLinkTab(item);
+
+      await user.selectOptions(within(dialog).getByLabelText('Link expiry'), 'Expires in 30 days');
+      await waitFor(() => expect(api.access(item.id).link!.expiresAt).not.toBeNull());
+      await user.selectOptions(within(dialog).getByLabelText('Link expiry'), 'Never expires');
+      await waitFor(() => expect(api.access(item.id).link!.expiresAt).toBeNull());
+      await user.selectOptions(within(dialog).getByLabelText('Version for the link'), 'Only v1');
+      await waitFor(() => expect(api.access(item.id).link!.pinnedVersionNo).toBe(1));
+      expect(api.access(item.id).link!.url).toBe(url);
+    });
+
+    it('resets the link after confirming, and turns it off', async () => {
+      const item = artifact();
+      api.addLink(item.id);
+      const before = api.access(item.id).link!.url;
+      const { user, dialog } = await openLinkTab(item);
+
+      await user.click(within(dialog).getByRole('button', { name: 'Reset link' }));
+      const confirm = await screen.findByRole('alertdialog', { name: 'Reset the link?' });
+      await user.click(within(confirm).getByRole('button', { name: 'Reset link' }));
+      await waitFor(() => expect(api.access(item.id).link!.url).not.toBe(before));
+      expect(((await within(dialog).findByLabelText('Link URL')) as HTMLInputElement).value).toBe(
+        api.access(item.id).link!.url,
+      );
+
+      await user.click(within(dialog).getByRole('switch', { name: 'Anyone with the link' }));
+      await within(dialog).findByText("Off: there's no link.");
+      expect(api.access(item.id).link).toBeNull();
+      expect(within(dialog).queryByLabelText('Link URL')).toBeNull();
+    });
+
+    it('says when the link has expired', async () => {
+      const item = artifact();
+      api.addLink(item.id, { expired: true });
+      const { dialog } = await openLinkTab(item);
+      expect(within(dialog).getByRole('tab', { name: /Link/ }).textContent).toContain('Expired');
+      expect(
+        within(dialog).getByText('Expired: choose a new expiry to make it work again.'),
+      ).toBeTruthy();
+      expect(within(dialog).getByText('Only you can see it.')).toBeTruthy();
+    });
   });
 });

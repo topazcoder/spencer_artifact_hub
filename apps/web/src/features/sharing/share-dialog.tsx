@@ -1,5 +1,5 @@
 import type { Artifact, ArtifactAccess } from '@artifact-hub/shared';
-import { BuildingIcon, LinkIcon, UsersIcon } from 'lucide-react';
+import { BuildingIcon, GlobeIcon, LinkIcon, UsersIcon } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { InlineError, InlineLoading } from '@/components/inline-status.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
@@ -16,9 +16,10 @@ import {
 } from '@/components/ui/dialog.tsx';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx';
 import { copyWithToast } from '@/lib/clipboard.ts';
-import { accessSummary } from './access-summary.ts';
+import { accessSummary, isLinkActive } from './access-summary.ts';
 import { AddPeopleForm } from './add-people-form.tsx';
 import { CompanyAccess } from './company-access.tsx';
+import { LinkAccess } from './link-access.tsx';
 import { PeopleList } from './people-list.tsx';
 import { useAccess } from './use-sharing.ts';
 
@@ -28,6 +29,7 @@ import { useAccess } from './use-sharing.ts';
  */
 export function ShareDialog({ artifact, children }: { artifact: Artifact; children: ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<AccessTab>('people');
   const { data: access, error, refetch } = useAccess(artifact.id, { enabled: open });
 
   return (
@@ -44,20 +46,27 @@ export function ShareDialog({ artifact, children }: { artifact: Artifact; childr
         {error ? (
           <InlineError error={error} onRetry={() => void refetch()} />
         ) : access ? (
-          <AccessTabs artifact={artifact} access={access} />
+          <AccessTabs artifact={artifact} access={access} tab={tab} onTabChange={setTab} />
         ) : (
           <div className="h-40">
             <InlineLoading />
           </div>
         )}
         <DialogFooter className="sm:justify-between">
-          <Button
-            variant="outline"
-            onClick={() => void copyWithToast(`${window.location.origin}/artifacts/${artifact.id}`)}
-          >
-            <LinkIcon aria-hidden="true" />
-            Copy link
-          </Button>
+          {/* The artifact's own URL works for colleagues; the Link tab has its own link. */}
+          {tab === 'link' ? (
+            <span />
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() =>
+                void copyWithToast(`${window.location.origin}/artifacts/${artifact.id}`)
+              }
+            >
+              <LinkIcon aria-hidden="true" />
+              Copy link
+            </Button>
+          )}
           <DialogClose asChild>
             <Button>Done</Button>
           </DialogClose>
@@ -67,9 +76,25 @@ export function ShareDialog({ artifact, children }: { artifact: Artifact; childr
   );
 }
 
-function AccessTabs({ artifact, access }: { artifact: Artifact; access: ArtifactAccess }) {
+type AccessTab = 'people' | 'company' | 'link';
+
+function AccessTabs({
+  artifact,
+  access,
+  tab,
+  onTabChange,
+}: {
+  artifact: Artifact;
+  access: ArtifactAccess;
+  tab: AccessTab;
+  onTabChange: (tab: AccessTab) => void;
+}) {
   return (
-    <Tabs defaultValue="people" className="min-h-0 gap-4">
+    <Tabs
+      value={tab}
+      onValueChange={(value) => onTabChange(value as AccessTab)}
+      className="min-h-0 gap-4"
+    >
       <TabsList className="w-full">
         <TabsTrigger value="people">
           <UsersIcon aria-hidden="true" />
@@ -84,6 +109,13 @@ function AccessTabs({ artifact, access }: { artifact: Artifact; access: Artifact
           <BuildingIcon aria-hidden="true" />
           Company
           {access.company.enabled ? <Badge variant="secondary">On</Badge> : null}
+        </TabsTrigger>
+        <TabsTrigger value="link">
+          <GlobeIcon aria-hidden="true" />
+          Link
+          {access.link ? (
+            <Badge variant="secondary">{isLinkActive(access.link) ? 'On' : 'Expired'}</Badge>
+          ) : null}
         </TabsTrigger>
       </TabsList>
       <TabsContent value="people" className="-m-1 grid min-h-0 gap-4 overflow-y-auto p-1">
@@ -100,6 +132,13 @@ function AccessTabs({ artifact, access }: { artifact: Artifact; access: Artifact
           and comment on it.
         </TabDescription>
         <CompanyAccess artifactId={artifact.id} company={access.company} />
+      </TabsContent>
+      <TabsContent value="link" className="-m-1 grid min-h-0 gap-4 overflow-y-auto p-1">
+        <TabDescription>
+          For people outside the company. Anyone who has the link can view and download it without
+          signing in, but not comment.
+        </TabDescription>
+        <LinkAccess artifactId={artifact.id} link={access.link} />
       </TabsContent>
     </Tabs>
   );

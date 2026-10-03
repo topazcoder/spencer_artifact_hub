@@ -2,6 +2,9 @@ import {
   type ArtifactAccess,
   artifactAccessResponseSchema,
   type SetCompanyAccessRequest,
+  type SetShareLinkRequest,
+  type SharedArtifactResponse,
+  sharedArtifactResponseSchema,
   type SharePeopleRequest,
   type UpdatePersonAccessRequest,
   type UserSummary,
@@ -57,6 +60,40 @@ export function removePerson(artifactId: string, userId: string): Promise<Artifa
   return accessRequest(`${accessPath(artifactId)}/people/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
   });
+}
+
+/** Turns the link on, or changes its expiry or version (the URL stays the same). */
+export function setShareLink(
+  artifactId: string,
+  body: SetShareLinkRequest,
+): Promise<ArtifactAccess> {
+  return accessRequest(`${accessPath(artifactId)}/link`, { method: 'PUT', body });
+}
+
+export function turnOffShareLink(artifactId: string): Promise<ArtifactAccess> {
+  return accessRequest(`${accessPath(artifactId)}/link`, { method: 'DELETE' });
+}
+
+/** A new URL for the link; the old one stops working. */
+export function resetShareLink(artifactId: string): Promise<ArtifactAccess> {
+  return accessRequest(`${accessPath(artifactId)}/link/reset`, { method: 'POST' });
+}
+
+const sharedPath = (token: string) => `/s/${encodeURIComponent(token)}`;
+
+export const sharedArtifactQueryKey = (token: string) => ['shared', token] as const;
+
+/** What a share link shows. Needs no sign-in. */
+export function fetchSharedArtifact(
+  token: string,
+  signal?: AbortSignal,
+): Promise<SharedArtifactResponse> {
+  return apiRequest(sharedPath(token), { schema: sharedArtifactResponseSchema, signal });
+}
+
+/** Where a share link's content is, relative to `/api`. */
+export function sharedContentPath(token: string): string {
+  return `${sharedPath(token)}/content`;
 }
 
 /** Other users whose email or name starts with `query` (3+ characters), at most five. */
