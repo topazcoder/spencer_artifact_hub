@@ -2,13 +2,7 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { ErrorCode } from '@artifact-hub/shared';
 import { ZodError } from 'zod';
 import { AppError } from './app-error.js';
-
-export interface ErrorResponse {
-  status: number;
-  code: ErrorCode;
-  message: string;
-  details?: unknown;
-}
+import type { ErrorResponse } from './errors.types.js';
 
 export const GENERIC_ERROR_MESSAGE =
   'Something went wrong on our side. Please try again, and quote the request ID if it keeps happening.';

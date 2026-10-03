@@ -2,10 +2,12 @@ import { Controller, Get, type INestApplication, Post } from '@nestjs/common';
 import { apiErrorBodySchema, ErrorCode } from '@artifact-hub/shared';
 import request from 'supertest';
 import { z } from 'zod';
+import { Public } from '../src/auth/auth.decorators.js';
 import { AppError } from '../src/common/errors/app-error.js';
 import { GENERIC_ERROR_MESSAGE } from '../src/common/errors/error-response.js';
 import { createTestApp } from './create-test-app.js';
 
+@Public()
 @Controller('test-errors')
 class ErrorsTestController {
   @Get('domain')

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Params } from 'nestjs-pino';
-import type { Env } from '../../config/env.js';
+import type { Env } from '../../config/config.types.js';
 
 export const REQUEST_ID_HEADER = 'x-request-id';
 const VALID_REQUEST_ID = /^[\w.:-]{1,128}$/;

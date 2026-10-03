@@ -19,6 +19,19 @@ Known limitations of the current build, and planned improvements.
 ### Password lifecycle
 - Password reset via email, password change, and session management UI ("log out other devices").
 
+### Rate limiting
+**Current state:** `@nestjs/throttler` with its default in-memory store limits login attempts per client IP and per email (and signups per IP), over a fixed window. Every attempt counts, successful or not.
+
+**Limitations:**
+- Counters live in the process: they reset on restart and are not shared between replicas.
+- Memory grows with the number of distinct keys (IPs, emails) seen in a window, so a flood of requests with random emails can inflate it until the window expires.
+- Anyone can use up the per-email budget of someone else's account and temporarily lock them out.
+
+**Planned:**
+- Move counters to Redis (e.g. `@nest-lab/throttler-storage-redis`): every key gets a TTL equal to its window (`INCR` + `PEXPIRE`), so memory stays bounded and expired entries clean themselves up. Counters are then shared across replicas and survive restarts.
+- Cap the in-memory store's size in the meantime (LRU), as a fallback when Redis is not configured.
+- Count only failed logins per email, reset the counter after a successful login, and use exponential backoff instead of a hard block, so a targeted lockout is short-lived.
+
 ## Storage and content
 - Implement the `s3` and `azure` `StorageDriver`s (interfaces already in place), with optional presigned download URLs.
 - Serve user content from a separate domain (`usercontent.<domain>`) as defense in depth beyond the CSP sandbox.

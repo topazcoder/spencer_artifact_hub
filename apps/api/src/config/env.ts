@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Env } from './config.types.js';
 
 // Development defaults match docker-compose.yml, so `pnpm dev` works without a .env file.
 const DEV_APP_BASE_URL = 'http://localhost:5173';
@@ -16,6 +17,18 @@ export const envSchema = z
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
     /** Directory of the built SPA. When set, the API also serves the web app (production image). */
     WEB_DIST_DIR: z.string().optional(),
+    /**
+     * Number of reverse proxies in front of the app (1 on Railway). Needed so the client IP used
+     * for rate limiting and session records is the real one, not the proxy's.
+     */
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
+    SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(7),
+    /** Defaults to true in production and false otherwise (plain-http dev server). */
+    COOKIE_SECURE: z.stringbool().optional(),
+    /** Login attempts allowed per window, counted per client IP and per email. */
+    RATE_LIMIT_LOGIN_PER_IP: z.coerce.number().int().min(1).default(20),
+    RATE_LIMIT_LOGIN_PER_EMAIL: z.coerce.number().int().min(1).default(10),
+    RATE_LIMIT_LOGIN_WINDOW_SECONDS: z.coerce.number().int().min(1).default(900),
   })
   .transform((env, ctx) => {
     if (env.NODE_ENV === 'production') {
@@ -29,10 +42,9 @@ export const envSchema = z
       ...env,
       APP_BASE_URL: (env.APP_BASE_URL ?? DEV_APP_BASE_URL).replace(/\/+$/, ''),
       DATABASE_URL: env.DATABASE_URL ?? DEV_DATABASE_URL,
+      COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
     };
   });
-
-export type Env = z.output<typeof envSchema>;
 
 export class InvalidEnvError extends Error {
   constructor(error: z.ZodError) {

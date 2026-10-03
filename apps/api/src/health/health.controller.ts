@@ -2,10 +2,12 @@ import { Controller, Get } from '@nestjs/common';
 import { ErrorCode } from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { DataSource } from 'typeorm';
+import { Public } from '../auth/auth.decorators.js';
 import { AppError } from '../common/errors/app-error.js';
 
 const DB_CHECK_TIMEOUT_MS = 2000;
 
+@Public()
 @Controller('health')
 export class HealthController {
   constructor(

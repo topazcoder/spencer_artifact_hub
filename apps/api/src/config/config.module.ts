@@ -1,5 +1,5 @@
 import { DynamicModule, Global, Inject, Module } from '@nestjs/common';
-import type { Env } from './env.js';
+import type { Env } from './config.types.js';
 
 export const ENV = Symbol('ENV');
 

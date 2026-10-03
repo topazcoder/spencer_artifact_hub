@@ -7,4 +7,10 @@ export const testEnv = parseEnv({
   DATABASE_URL:
     process.env.TEST_DATABASE_URL ??
     'postgres://artifact_hub:artifact_hub@localhost:5432/artifact_hub_test',
+  // High enough that suites logging in repeatedly never hit them; the rate-limit test lowers them.
+  RATE_LIMIT_LOGIN_PER_IP: '1000',
+  RATE_LIMIT_LOGIN_PER_EMAIL: '1000',
 });
+
+/** The `Origin` the test app accepts for state-changing requests. */
+export const TEST_ORIGIN = testEnv.APP_BASE_URL;

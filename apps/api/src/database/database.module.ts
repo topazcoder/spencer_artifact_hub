@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ENV } from '../config/config.module.js';
-import type { Env } from '../config/env.js';
+import type { Env } from '../config/config.types.js';
 import { buildDataSourceOptions } from './data-source.options.js';
 
 @Module({

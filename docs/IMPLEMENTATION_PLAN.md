@@ -456,7 +456,7 @@ POST   /mcp
 
 ### Environment variables
 ```
-NODE_ENV, PORT, APP_BASE_URL, LOG_LEVEL
+NODE_ENV, PORT, APP_BASE_URL, LOG_LEVEL, TRUST_PROXY_HOPS (1 on Railway)
 DATABASE_URL
 SESSION_TTL_DAYS=7, COOKIE_SECURE=true
 STORAGE_DRIVER=local, STORAGE_LOCAL_ROOT=/data/blobs
@@ -466,7 +466,8 @@ MAX_ARTIFACT_BYTES=10485760
 UPLOAD_SESSION_TTL_MINUTES=30
 AI_ENABLED=true, ANTHROPIC_API_KEY, AI_MODEL_FAST, AI_MODEL_SMART  (all optional; app runs without them)
 AI_TIMEOUT_MS=8000, AI_CIRCUIT_FAILURE_THRESHOLD=5, AI_CIRCUIT_COOLDOWN_SECONDS=60
-RATE_LIMIT_* (login, upload, ai)
+RATE_LIMIT_LOGIN_PER_IP=20, RATE_LIMIT_LOGIN_PER_EMAIL=10, RATE_LIMIT_LOGIN_WINDOW_SECONDS=900
+RATE_LIMIT_* (upload, ai: added with those features)
 SEED_DEMO=true
 ```
 
@@ -506,7 +507,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 3. ✅ Docker, compose, Postgres with TypeORM and the first migration, then **deploy to Railway** (deploy deferred).
 
 **Auth**
-4. Signup, login, logout and `me` endpoints, sessions, guard, CSRF Origin check, plus e2e tests.
+4. ✅ Signup, login, logout and `me` endpoints, sessions, guard, CSRF Origin check, plus e2e tests.
 5. Login and signup screens, app shell and protected routes.
 
 **Artifacts**

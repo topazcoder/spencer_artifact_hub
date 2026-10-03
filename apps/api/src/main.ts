@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { existsSync } from 'node:fs';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module.js';
 import { configureApp } from './app.setup.js';
@@ -17,7 +18,9 @@ try {
   process.exit(1);
 }
 
-const app = await NestFactory.create(AppModule.register(env), { bufferLogs: true });
+const app = await NestFactory.create<NestExpressApplication>(AppModule.register(env), {
+  bufferLogs: true,
+});
 configureApp(app);
 await app.listen(env.PORT);
 app.get(Logger).log(`API listening on port ${env.PORT} (${env.NODE_ENV})`, 'Bootstrap');

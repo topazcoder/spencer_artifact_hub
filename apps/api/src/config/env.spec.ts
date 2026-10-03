@@ -10,7 +10,20 @@ describe('parseEnv', () => {
       APP_BASE_URL: 'http://localhost:5173',
       LOG_LEVEL: 'info',
       DATABASE_URL,
+      TRUST_PROXY_HOPS: 0,
+      SESSION_TTL_DAYS: 7,
+      COOKIE_SECURE: false,
+      RATE_LIMIT_LOGIN_PER_IP: 20,
+      RATE_LIMIT_LOGIN_PER_EMAIL: 10,
+      RATE_LIMIT_LOGIN_WINDOW_SECONDS: 900,
     });
+  });
+
+  it('defaults COOKIE_SECURE to true in production, and lets it be overridden', () => {
+    const prod = { NODE_ENV: 'production', APP_BASE_URL: 'https://hub.example.com', DATABASE_URL };
+    expect(parseEnv(prod).COOKIE_SECURE).toBe(true);
+    expect(parseEnv({ ...prod, COOKIE_SECURE: 'false' }).COOKIE_SECURE).toBe(false);
+    expect(parseEnv({ DATABASE_URL, COOKIE_SECURE: 'true' }).COOKIE_SECURE).toBe(true);
   });
 
   it('coerces numbers and strips the trailing slash from APP_BASE_URL', () => {
