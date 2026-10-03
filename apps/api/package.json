@@ -1,0 +1,33 @@
+{
+  "name": "@artifact-hub/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nest build",
+    "dev": "nest start --watch --preserveWatchOutput",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.config.e2e.ts"
+  },
+  "dependencies": {
+    "@artifact-hub/shared": "workspace:*",
+    "@nestjs/common": "^12.1.2",
+    "@nestjs/core": "^12.1.2",
+    "@nestjs/platform-express": "^12.1.2",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^12.0.8",
+    "@nestjs/testing": "^12.1.2",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.19.1",
+    "@types/supertest": "^7.0.0",
+    "supertest": "^7.3.1",
+    "tslib": "^2.8.1",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.11"
+  }
+}

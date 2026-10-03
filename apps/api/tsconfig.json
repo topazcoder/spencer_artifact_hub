@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2023"],
+    "types": ["node", "vitest/globals"],
+    "outDir": "dist",
+    "rootDir": ".",
+    "sourceMap": true,
+    "incremental": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "strictPropertyInitialization": false
+  },
+  "include": ["src", "test", "*.config.ts"]
+}
