@@ -61,6 +61,8 @@ export interface ArtifactView {
   /** `artifact.latestVersionNo`, or `currentVersion`'s number for pinned viewers. */
   latestVersionNo: number;
   permissions: ArtifactPermissions;
+  /** What access decisions about it are made on, for other modules to ask `AccessPolicy`. */
+  target: AccessTarget;
 }
 
 /** An artifact with the facts `AccessPolicy` decides on. */

@@ -207,7 +207,7 @@ export type ArtifactTypeFilter = keyof typeof ARTIFACT_TYPE_FILTERS;
 export const ARTIFACT_SEARCH_MAX_LENGTH = 200;
 
 /** Blank values count as absent, so a cleared filter in a URL (`?q=`) is no filter. */
-const blankAsUndefined = (value: unknown) =>
+export const blankAsUndefined = (value: unknown) =>
   typeof value === 'string' && value.trim() === '' ? undefined : value;
 
 /** Query of `GET /api/artifacts`. Filters narrow the scope; `q` also ranks by relevance. */

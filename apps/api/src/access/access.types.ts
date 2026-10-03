@@ -25,6 +25,13 @@ export interface AccessGrant {
   pinnedVersionId: string | null;
 }
 
+/** The comment fields comment decisions depend on. */
+export interface CommentTarget {
+  authorId: string;
+  /** Null for a top-level comment. */
+  parentId: string | null;
+}
+
 /** A share link, with what decides whether it still opens its artifact. */
 export interface LinkTarget {
   revokedAt: Date | null;

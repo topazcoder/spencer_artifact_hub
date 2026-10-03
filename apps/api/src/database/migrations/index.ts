@@ -5,6 +5,7 @@ import { IndexPublicArtifacts1791300000000 } from './1791300000000-IndexPublicAr
 import { CreateShares1791400000000 } from './1791400000000-CreateShares.js';
 import { CreateShareLinks1791500000000 } from './1791500000000-CreateShareLinks.js';
 import { AddArtifactSearch1791600000000 } from './1791600000000-AddArtifactSearch.js';
+import { CreateComments1791700000000 } from './1791700000000-CreateComments.js';
 
 /**
  * Every migration, in order. Listed explicitly (not globbed) so the same list works from
@@ -18,4 +19,5 @@ export const migrations = [
   CreateShares1791400000000,
   CreateShareLinks1791500000000,
   AddArtifactSearch1791600000000,
+  CreateComments1791700000000,
 ];

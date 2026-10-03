@@ -171,7 +171,7 @@ can(actor, action, artifact, ctx?) where action ∈ view | comment | edit | shar
 
 Access is the most generous of what applies. It is read on every request, so removing someone, turning company access off or revoking a link takes effect immediately, including in *Shared with me*. A link is **valid** if it is not revoked, `expires_at` is null or in the future, and the artifact is published and not deleted.
 
-Comment rules: a reply's parent must be top-level and on the same version. Resolve/reopen is allowed only for the author of a top-level comment. Edit/delete is allowed only for the author (soft delete keeps the thread intact).
+Comment rules: everyone who can view an artifact reads the comments on the versions they can see; posting and replying need `comment`. A reply's parent must be top-level and on the same version. Resolve/reopen is allowed only for the author of a top-level comment. Edit/delete is allowed only for the author; editing and resolving also need `comment` (an author downgraded to view can still delete their own comments). Delete is soft: the row is kept, but a deleted comment is hidden, and a deleted top-level comment hides its replies with it.
 
 **Versions:** company access, each person and the link show either the latest version or one pinned version. A user sees every version if any access that applies to them is unpinned; otherwise only the pinned versions, the newest of them as current. The owner always sees everything.
 
@@ -417,8 +417,9 @@ POST   /api/artifacts/:id/versions                (multipart: `metadata` JSON {c
 GET    /api/artifacts/:id/versions
 GET    /api/artifacts/:id/versions/:no/content    (sandboxed stream; ?download=1)
 
-GET    /api/artifacts/:id/comments?version=&include=all
-POST   /api/artifacts/:id/comments                (body, version?, parentId?)            [Idempotency-Key]
+GET    /api/artifacts/:id/comments?version=&include=open|all   (threads oldest first; no version =
+       every version the caller can see; include defaults to all)
+POST   /api/artifacts/:id/comments                (body, versionNo?, parentId?)          [Idempotency-Key]
 PATCH  /api/comments/:id                          (edit body | resolved)
 DELETE /api/comments/:id
 GET    /api/artifacts/:id/feedback-summary?version=
@@ -547,7 +548,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 15. ✅ Plain full-text search and filters in the gallery. (Search uses prefix matching so results show while typing: every word must match a word or its start, ranked by `ts_rank` with the field weights. Type and tag filters, and a tag list per scope.)
 
 **Comments**
-16. Comments API: replies, resolve, edit and delete.
+16. ✅ Comments API: replies, resolve, edit and delete. (Comment rules live in `AccessPolicy.commentPermissions`; view-only people read comments; deleted comments disappear with their replies; the open-comment count on gallery cards moves to step 28.)
 17. Feedback panel with the version filter.
 
 **MCP**
@@ -567,7 +568,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 27. Natural-language search.
 
 **Ship**
-28. Seed data, thumbnails, polish, WRITEUP.md, walkthrough, session logs and the `.claude/` directory.
+28. Seed data, thumbnails, open-comment counts on gallery cards, polish, WRITEUP.md, walkthrough, session logs and the `.claude/` directory.
 
 **Cut line if behind** (drop in this order): NL search → falls back to plain full-text search; direct `PUT` upload (keep browser upload page); thumbnails → type icons; links without sign-in (step 14) → sharing inside the company only.
 

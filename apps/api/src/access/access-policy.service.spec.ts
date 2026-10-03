@@ -210,6 +210,58 @@ describe('AccessPolicyService', () => {
     });
   });
 
+  describe('commentPermissions', () => {
+    const PARENT_ID = '00000000-0000-4000-8000-0000000000cc';
+    const byOther = { authorId: OTHER_ID, parentId: null };
+
+    it('lets the author edit, resolve and delete a top-level comment', () => {
+      expect(policy.commentPermissions(actor(OTHER_ID), byOther, shared(grant('comment')))).toEqual(
+        { edit: true, resolve: true, delete: true },
+      );
+    });
+
+    it('never resolves a reply', () => {
+      const reply = { authorId: OTHER_ID, parentId: PARENT_ID };
+      expect(policy.commentPermissions(actor(OTHER_ID), reply, shared(grant('comment')))).toEqual({
+        edit: true,
+        resolve: false,
+        delete: true,
+      });
+    });
+
+    it('gives nobody else anything, the artifact owner included', () => {
+      const none = { edit: false, resolve: false, delete: false };
+      expect(policy.commentPermissions(actor(OWNER_ID), byOther, artifact())).toEqual(none);
+      expect(
+        policy.commentPermissions(
+          actor(OTHER_ID),
+          { authorId: OWNER_ID, parentId: null },
+          artifact({ visibility: 'public' }),
+        ),
+      ).toEqual(none);
+    });
+
+    it('lets an author who can only view now delete, but not edit or resolve', () => {
+      expect(policy.commentPermissions(actor(OTHER_ID), byOther, shared(grant('view')))).toEqual({
+        edit: false,
+        resolve: false,
+        delete: true,
+      });
+    });
+
+    it('gives an author without access nothing', () => {
+      const none = { edit: false, resolve: false, delete: false };
+      expect(policy.commentPermissions(actor(OTHER_ID), byOther, artifact())).toEqual(none);
+      expect(
+        policy.commentPermissions(
+          actor(OTHER_ID),
+          byOther,
+          artifact({ visibility: 'public', deletedAt: new Date() }),
+        ),
+      ).toEqual(none);
+    });
+  });
+
   describe('visibleVersionIds', () => {
     it('shows every version to the owner, pinned or not', () => {
       expect(policy.visibleVersionIds(actor(OWNER_ID), artifact())).toBeNull();

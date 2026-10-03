@@ -336,6 +336,7 @@ export class ArtifactsService {
         currentVersion: artifact.currentVersion,
         latestVersionNo: artifact.latestVersionNo,
         permissions,
+        target,
       };
     }
     const currentVersion =
@@ -350,6 +351,7 @@ export class ArtifactsService {
       currentVersion,
       latestVersionNo: currentVersion?.versionNo ?? 0,
       permissions,
+      target,
     };
   }
 

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { type ArtifactPermissions, ErrorCode } from '@artifact-hub/shared';
+import { type ArtifactPermissions, type CommentPermissions, ErrorCode } from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Brackets, type ObjectLiteral, type SelectQueryBuilder } from 'typeorm';
 import type { Actor } from '../auth/auth.types.js';
@@ -7,6 +7,7 @@ import { AppError } from '../common/errors/app-error.js';
 import type {
   AccessAction,
   AccessTarget,
+  CommentTarget,
   DenialReason,
   LinkDenialReason,
   LinkTarget,
@@ -28,6 +29,8 @@ const OWNER_ONLY_ACTIONS: ReadonlySet<AccessAction> = new Set(['edit', 'share', 
  * - Company access and each share show the latest version or one pinned version.
  * - Nobody else gets anything. Deleted artifacts are gone for everyone.
  *
+ * Comments are their author's: only they may edit, resolve (top-level only) or delete one.
+ *
  * A share link lets anyone who has it view and download one version, without signing in, while
  * it is live (`linkDenialReason`). It is checked by the link's own endpoints only, and never
  * grants anything inside the app.
@@ -47,6 +50,25 @@ export class AccessPolicyService {
       edit: this.can(actor, 'edit', artifact),
       share: this.can(actor, 'share', artifact),
       delete: this.can(actor, 'delete', artifact),
+    };
+  }
+
+  /**
+   * What `actor` may do with a comment they can see on `artifact` (plan §4). Editing and
+   * resolving need the right to comment, so losing it freezes their comments; deleting their own
+   * words only needs them to still see the artifact.
+   */
+  commentPermissions(
+    actor: Actor,
+    comment: CommentTarget,
+    artifact: AccessTarget,
+  ): CommentPermissions {
+    const authorWithAccess = comment.authorId === actor.userId && this.can(actor, 'view', artifact);
+    const mayComment = authorWithAccess && this.can(actor, 'comment', artifact);
+    return {
+      edit: mayComment,
+      resolve: mayComment && comment.parentId === null,
+      delete: authorWithAccess,
     };
   }
 
