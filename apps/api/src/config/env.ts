@@ -31,6 +31,7 @@ export const envSchema = z
     RATE_LIMIT_LOGIN_PER_IP: z.coerce.number().int().min(1).default(20),
     RATE_LIMIT_LOGIN_PER_EMAIL: z.coerce.number().int().min(1).default(10),
     RATE_LIMIT_LOGIN_WINDOW_SECONDS: z.coerce.number().int().min(1).default(900),
+    RATE_LIMIT_USER_SEARCH_PER_MINUTE: z.coerce.number().int().min(1).default(60),
     /** Where artifact content is stored. Only `local` is implemented; s3/azure are planned. */
     STORAGE_DRIVER: z.enum(['local', 's3', 'azure']).default('local'),
     /** Root directory of the `local` driver (a mounted volume in production). */

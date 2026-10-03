@@ -1,5 +1,12 @@
 import { type Artifact, type ArtifactVersion, formatBytes } from '@artifact-hub/shared';
-import { DownloadIcon, LockIcon, MaximizeIcon, UploadIcon } from 'lucide-react';
+import {
+  BuildingIcon,
+  DownloadIcon,
+  LockIcon,
+  MaximizeIcon,
+  Share2Icon,
+  UploadIcon,
+} from 'lucide-react';
 import { useRef } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { InlineError, InlineLoading } from '@/components/inline-status.tsx';
@@ -13,7 +20,7 @@ import { NewVersionDialog } from '@/features/artifacts/new-version-dialog.tsx';
 import { useArtifact, useArtifactVersions } from '@/features/artifacts/use-artifacts.ts';
 import { VersionList } from '@/features/artifacts/version-list.tsx';
 import { ArtifactViewer } from '@/features/artifacts/viewers/artifact-viewer.tsx';
-import { useCurrentUser } from '@/features/auth/use-auth.ts';
+import { ShareDialog } from '@/features/sharing/share-dialog.tsx';
 import { isApiError } from '@/lib/api/api-error.ts';
 import { formatRelativeTime } from '@/lib/format.ts';
 
@@ -61,8 +68,7 @@ function useSelectedVersion(artifact: Artifact): ArtifactVersion | null | undefi
 function ArtifactView({ artifact }: { artifact: Artifact }) {
   const viewerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { data: user } = useCurrentUser();
-  const canEdit = user?.id === artifact.owner.id;
+  const { permissions } = artifact;
   const current = artifact.currentVersion;
   const version = useSelectedVersion(artifact);
 
@@ -96,12 +102,23 @@ function ArtifactView({ artifact }: { artifact: Artifact }) {
                 Private
               </Badge>
             ) : (
-              <Badge variant="secondary">Public</Badge>
+              <Badge variant="secondary">
+                <BuildingIcon aria-hidden="true" />
+                Company
+              </Badge>
             )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canEdit ? (
+          {permissions.share ? (
+            <ShareDialog artifact={artifact}>
+              <Button variant="outline">
+                <Share2Icon aria-hidden="true" />
+                Share
+              </Button>
+            </ShareDialog>
+          ) : null}
+          {permissions.edit ? (
             <NewVersionDialog
               artifact={artifact}
               // Show the new version, wherever the page was.
@@ -170,7 +187,7 @@ function ArtifactView({ artifact }: { artifact: Artifact }) {
               <TabsTrigger value="versions">Versions</TabsTrigger>
             </TabsList>
             <TabsContent value="details" className="pt-2">
-              <ArtifactDetails artifact={artifact} canEdit={canEdit} />
+              <ArtifactDetails artifact={artifact} />
             </TabsContent>
             <TabsContent value="versions" className="pt-2">
               {current ? (

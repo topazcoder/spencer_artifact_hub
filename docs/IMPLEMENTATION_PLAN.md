@@ -24,13 +24,13 @@ Time box: 2 days. The priority is a polished, working core over a large feature 
 | Hosting | Railway: one app service + Railway Postgres + Railway Volume for blobs |
 
 ### Product rules
-- **Everything requires authentication** except signup and login. No anonymous viewing or commenting, and no public share pages.
-- **Visibility:** `public` = visible to and commentable by every logged-in user. `private` = owner only, plus whoever a share grants access to.
-- **Share audience:** a share gives `view` or `comment` access (`comment` includes `view`) to either:
-  - `anyone_with_link`: any logged-in user who opens the link, or
-  - `specific_users`: the owner enters emails; each is resolved to an existing user and stored as a **relation** (`share_recipients.user_id → users.id`), never as a plain email. If any email is unknown, the whole request fails with a list of the unknown emails (no verification yet, see ENHANCEMENTS.md).
-  - Expiration is optional, and the owner can revoke a share at any time.
-- **Versioning:** new content means a new immutable version. Changing metadata (title, description, tags, visibility) does not create a version.
+- **Everything requires authentication** except signup, login and opening a valid **share link**, which allows viewing and downloading only. Commenting always requires signing in.
+- **Access:** an artifact starts **private** (owner only). In the share dialog the owner can add three kinds of access, in any combination:
+  - **People:** colleagues by email, each with `view` or `comment` (`comment` includes `view`). Each email is resolved to an existing user and stored as a **relation** (`shares.user_id → users.id`), never as a plain email. If any email is unknown, the whole request fails with a list of the unknown emails (no verification yet, see ENHANCEMENTS.md). Shared artifacts appear in the recipient's *Shared with me*.
+  - **Everyone at the company** (`visibility = 'public'`): every signed-in user can find, view and comment on it (gallery tab *Company*).
+  - **Anyone with the link** (step 14): one link per artifact that works **without signing in**, for people outside the company; view and download only. Optional expiry (1 / 7 / 30 days or never), copyable at any time, can be reset (new URL, old one dead) or turned off.
+  - Each of the three shows either the **latest version** or **one pinned version**. Removing access takes effect immediately.
+- **Versioning:** new content means a new immutable version. Changing metadata (title, description, tags) or access does not create a version.
 - **Comments:** attached to a specific version; one level of replies; only top-level comments can be resolved (or reopened), and only by their author.
 - **Metadata:** title, description and tags are **required** in MCP tools, because the calling LLM has the best context. In the web UI, the form is pre-filled with AI suggestions after upload, and blanks left on submit are filled asynchronously.
 - **Size limit:** `MAX_ARTIFACT_BYTES`, 10 MB by default, enforced while the upload streams in.
@@ -57,7 +57,7 @@ artifact_hub/
 │  │  │  ├─ artifacts/        # artifacts + versions, content streaming
 │  │  │  ├─ uploads/          # upload sessions (MCP binary flow), content validation
 │  │  │  ├─ access/           # AccessPolicy: the only place authorization is decided
-│  │  │  ├─ sharing/          # shares, recipients, redemptions
+│  │  │  ├─ sharing/          # access settings: people, company access, link (step 14)
 │  │  │  ├─ comments/         # comments, replies, resolve
 │  │  │  ├─ search/           # FTS + NL query → structured filters
 │  │  │  ├─ ai/               # AiService (Claude), enrichment jobs, feedback summaries
@@ -100,7 +100,8 @@ api_tokens
 
 artifacts
   id uuid PK, owner_id FK, title, description, tags text[],
-  visibility enum('public','private'),
+  visibility enum('public','private'),       -- public = everyone at the company
+  public_pinned_version_id FK NULL,           -- version the company sees; NULL = latest
   current_version_id FK NULL, latest_version_no int default 0,
   status enum('draft','published')           -- draft = awaiting first upload (MCP upload session)
   metadata_source enum('user','ai','mixed'),
@@ -118,16 +119,15 @@ upload_sessions
   purpose enum('create','new_version'), change_note,
   expires_at, consumed_at NULL, resulting_version_id NULL, created_at
 
-shares
-  id uuid PK, artifact_id FK, created_by FK, token_hash UNIQUE,
-  permission enum('view','comment'), audience enum('anyone_with_link','specific_users'),
-  pinned_version_id NULL (NULL = always latest), expires_at NULL, revoked_at NULL, created_at
+shares                                        -- a colleague's access ("People")
+  artifact_id FK, user_id FK, PK(artifact_id, user_id),
+  permission enum('view','comment'), pinned_version_id NULL (NULL = latest),
+  created_by FK, created_at, updated_at       -- removing someone deletes the row (and is logged)
 
-share_recipients                              -- for specific_users
-  share_id FK, user_id FK, PK(share_id, user_id)
-
-share_redemptions                             -- for anyone_with_link; populates "Shared with me"
-  share_id FK, user_id FK, first_opened_at, PK(share_id, user_id)
+share_links                                   -- step 14: anyone with the link, no sign-in
+  id uuid PK, artifact_id FK, token_hash UNIQUE (lookup), token_ciphertext (AES-256-GCM, so the
+  owner can copy the link again), pinned_version_id NULL, expires_at NULL, revoked_at NULL,
+  created_by FK, created_at                   -- at most one live link per artifact; reset = revoke + new row
 
 comments
   id uuid PK, artifact_id FK, version_id FK, parent_id FK NULL (replies only one level deep),
@@ -162,16 +162,16 @@ can(actor, action, artifact, ctx?) where action ∈ view | comment | edit | shar
 | Who | view | comment | edit / new version / share / delete |
 |---|---|---|---|
 | Owner | ✓ | ✓ | ✓ |
-| Any user, artifact `public` (and published: drafts stay owner-only) | ✓ | ✓ | ✗ (**403**: they can see it) |
-| Recipient of a valid `specific_users` share | ✓ | if permission=comment | ✗ |
-| Redeemer of a valid `anyone_with_link` share | ✓ | if permission=comment | ✗ |
+| Any signed-in user, artifact shared with everyone at the company (`public`; drafts stay owner-only) | ✓ | ✓ | ✗ (**403**: they can see it) |
+| A person it is shared with | ✓ | if permission=comment | ✗ |
+| Anyone with a valid link, signed in or not (step 14; only through the `/api/s/:token` endpoints) | ✓ (and download) | ✗ | ✗ |
 | Everyone else | ✗ (respond **404**, not 403, so existence isn't revealed) | ✗ | ✗ |
 
-A share is **valid** if it is not revoked and `expires_at` is null or in the future. These checks run on every request, so revoking or expiring a share removes access immediately, including from "Shared with me".
+Access is the most generous of what applies. It is read on every request, so removing someone, turning company access off or revoking a link takes effect immediately, including in *Shared with me*. A link is **valid** if it is not revoked, `expires_at` is null or in the future, and the artifact is published and not deleted.
 
 Comment rules: a reply's parent must be top-level and on the same version. Resolve/reopen is allowed only for the author of a top-level comment. Edit/delete is allowed only for the author (soft delete keeps the thread intact).
 
-When a share is pinned to a version, its recipients see only that version.
+**Versions:** company access, each person and the link show either the latest version or one pinned version. A user sees every version if any access that applies to them is unpinned; otherwise only the pinned versions, the newest of them as current. The owner always sees everything.
 
 ---
 
@@ -258,8 +258,8 @@ Tool descriptions are written the way users ask for things, and each says when t
 | `get_feedback` | "What did reviewers say about v2? Anything unresolved?" | `artifact`, `version?`, `include: summary/open/all` | AI summary + raw threads; comment bodies are marked as **untrusted user content** |
 | `add_comment` | "Tell them the header looks off", "reply to Sara's comment" | `artifact`, `body`, `version?`, `reply_to?` | |
 | `resolve_comment` | "Mark my comment about the logo as resolved" | `comment_id`, `resolved: bool` | Allowed only for the comment's author |
-| `share_artifact` | "Give Sara and Tom comment access until Friday", "make a view link for 7 days" | `artifact`, `permission`, `emails?` (else anyone-with-link), `expires_at?` or `expires_in_days?`, `version?` | Unknown emails are returned as a readable error listing which ones aren't registered |
-| `manage_access` | "Who can see this?", "revoke Tom's access", "make it private" | `artifact`, `action: list/revoke/set_visibility`, … | |
+| `share_artifact` | "Give Sara and Tom comment access", "share it with the whole company", "make a link for the client for 7 days" | `artifact`, `with: people/company/link`, `emails?`, `permission?`, `version?`, `expires_in_days?` (link only) | Unknown emails are returned as a readable error listing which ones aren't registered; a link result includes the URL |
+| `manage_access` | "Who can see this?", "remove Tom", "stop sharing it with the company", "kill the client link" | `artifact`, `action: list/remove_person/set_company/turn_off_link/reset_link`, … | |
 
 **Content input rule (MCP):** two paths only, with no base64.
 - **Text formats** (HTML, SVG, Markdown) are sent inline as `content`.
@@ -329,7 +329,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 ## 10. Error handling and idempotency
 
 ### Errors
-- Domain errors are defined in `packages/shared` with stable codes: `NOT_FOUND`, `FORBIDDEN`, `VALIDATION_FAILED`, `ARTIFACT_TOO_LARGE`, `UNSUPPORTED_TYPE`, `UPLOAD_SESSION_EXPIRED`, `UPLOAD_SESSION_USED`, `SHARE_RECIPIENT_UNKNOWN`, `RATE_LIMITED`, `CONFLICT`, `AI_UNAVAILABLE`, ….
+- Domain errors are defined in `packages/shared` with stable codes: `NOT_FOUND`, `FORBIDDEN`, `VALIDATION_FAILED`, `ARTIFACT_TOO_LARGE`, `UNSUPPORTED_TYPE`, `UPLOAD_SESSION_EXPIRED`, `UPLOAD_SESSION_USED`, `SHARE_RECIPIENT_UNKNOWN` (422, lists the unknown emails), `SHARE_EXPIRED` / `SHARE_REVOKED` (410, step 14, so the link page can explain), `RATE_LIMITED`, `CONFLICT`, `AI_UNAVAILABLE`, ….
 - A global exception filter maps them to HTTP status + `{ error: { code, message, details?, requestId } }`. The MCP adapter maps them to `isError` tool results.
 - Unknown errors are logged with stack and request ID; the client sees a generic message plus the `requestId`.
 - The web UI uses typed API client errors with toasts / inline form errors and retry on network failures for idempotent calls.
@@ -341,7 +341,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | MCP publish | Dedupe on `(owner, sha256)` within 10 min → return the existing artifact with `"deduplicated": true` |
 | MCP update with content | If `sha256` equals the current version's → no new version; return current with `"unchanged": true` |
 | MCP add_comment | Dedupe identical `(author, version, parent, body)` within 2 min |
-| MCP share_artifact | Identical active share (same audience, recipients, permission, expiry) → return existing |
+| MCP share_artifact | Naturally idempotent: sharing with someone who has access updates their settings (one row per person), the company switch is a setting, and turning on a link that is already on keeps its URL |
 | Upload session | Single-use token consumed atomically |
 | Version numbering | The blob key takes `latest_version_no + 1`; the transaction locks the artifact row and answers `409 CONFLICT` (blob deleted, client retries) if another version was committed meanwhile. `UNIQUE(artifact_id, version_no)` backs it up |
 
@@ -358,7 +358,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 - A request ID (incoming `X-Request-Id` or generated) is stored in AsyncLocalStorage, added to every log line and returned in the response header and error body. MCP tool calls get their own ID plus the tool name.
 - **Step logs in the main services:**
   - publish: received → type detected → blob stored (bytes, ms) → dedupe decision → version committed → jobs enqueued
-  - shares: created / redeemed / revoked / denied
+  - sharing: people added / changed / removed, company access changed (user ids only, never emails); step 14: link turned on / changed / reset / turned off, link opened or refused (reason)
   - access: denials at `debug`, with reason
   - comments: created / resolved
   - AI: job start, model, tokens in/out, latency, outcome
@@ -378,7 +378,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | S3 | **Path traversal / key injection in storage** | Server-generated keys; local driver verifies resolved path is under root |
 | S4 | **Oversized uploads / resource exhaustion** | Streaming size limit on multipart and raw `PUT`, inline `content` length check, body-parser limits, per-user upload rate limit |
 | S5 | **Broken access control / IDOR** | Single `AccessPolicy` used by REST and MCP; 404 for no access; e2e tests per role |
-| S6 | **Share token guessing / leakage** | 256-bit random tokens, only SHA-256 stored; expiry/revocation checked on every request; links still require login; `Referrer-Policy: no-referrer` |
+| S6 | **Share link guessing / leakage** (links work without sign-in) | 256-bit random tokens; looked up by SHA-256, and stored AES-256-GCM encrypted with `SHARE_LINK_KEY` only so the owner can copy it again (a database leak alone exposes no links); view and download only; optional expiry; revoke and reset take effect on the next request; one link per artifact; `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`; rate limited per IP |
 | S6b | **Upload URL leakage / hijack** | Upload token + user authentication (cookie or Bearer) both required, and the user must own the session; single-use, 30-minute TTL; 404 on mismatch |
 | S7 | **Share to unverified identity** (anyone can sign up with any email) | Accepted for the demo; grants only to existing users; SSO/email verification tracked in ENHANCEMENTS.md |
 | S8 | **Prompt injection via artifact content or comments → our LLM** | Delimited untrusted blocks, no tools, schema-validated output, length caps, output only ever used as data (never as instructions or HTML) |
@@ -392,7 +392,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | S16 | **Secrets in logs / errors** | pino redaction; generic 500 messages; no stack traces in responses |
 | S17 | **LLM cost abuse** | Per-user AI rate limits, input truncation, caching of summaries, `AI_ENABLED` switch |
 | S18 | **SSRF** | No server-side URL fetching features |
-| S19 | **Account / email enumeration** | Generic login errors; share errors for unknown emails are shown only to the owner of the artifact (an accepted trade-off) |
+| S19 | **Account / email enumeration** | Generic login errors; share errors for unknown emails are shown only to the owner of the artifact; user search for the share dialog needs 3+ characters, matches from the start of an email or name, returns at most 5 users and is rate limited (accepted trade-offs) |
 | S20 | **General hardening** | `helmet`, strict CSP for the SPA itself, `@nestjs/throttler`, env validated at boot, non-root container user |
 
 ---
@@ -403,11 +403,11 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 POST   /api/auth/signup | /login | /logout        GET /api/auth/me
 GET    /api/tokens   POST /api/tokens   DELETE /api/tokens/:id
 
-GET    /api/artifacts?q=&scope=mine|shared|public&type=&tag=&page=&pageSize=
+GET    /api/artifacts?q=&scope=mine|shared|public&type=&tag=&page=&pageSize=   (public = company)
 POST   /api/uploads/preview                       (multipart → detected type + AI suggestions)
 POST   /api/artifacts                             (multipart: `metadata` JSON field, then `file`) [Idempotency-Key]
 GET    /api/artifacts/:id
-PATCH  /api/artifacts/:id                         (metadata / visibility)
+PATCH  /api/artifacts/:id                         (title, description, tags)
 DELETE /api/artifacts/:id                         (soft delete)
 POST   /api/artifacts/:id/versions                (multipart: `metadata` JSON {changeNote}, then `file`) [Idempotency-Key]
 GET    /api/artifacts/:id/versions
@@ -419,8 +419,16 @@ PATCH  /api/comments/:id                          (edit body | resolved)
 DELETE /api/comments/:id
 GET    /api/artifacts/:id/feedback-summary?version=
 
-GET    /api/artifacts/:id/shares   POST /api/artifacts/:id/shares   DELETE /api/shares/:id
-GET    /api/s/:token                              (redeem → artifact id, permission)
+GET    /api/artifacts/:id/access                  (owner: company access, people, link)
+PUT    /api/artifacts/:id/access/company          ({ enabled, versionNo })
+POST   /api/artifacts/:id/access/people           ({ emails, permission, versionNo }; 422 lists unknown emails)
+PATCH  /api/artifacts/:id/access/people/:userId   ({ permission?, versionNo? })
+DELETE /api/artifacts/:id/access/people/:userId
+GET    /api/users/search?q=                       (share dialog autocomplete)
+PUT    /api/artifacts/:id/access/link             (step 14: turn on or change { expiresAt, versionNo })
+DELETE /api/artifacts/:id/access/link             POST /api/artifacts/:id/access/link/reset
+GET    /api/s/:token                              (public: title, owner name, the version shown)
+GET    /api/s/:token/content                      (public: sandboxed stream; ?download=1)
 
 GET    /api/upload-sessions/:token                (session cookie; owner only → draft info for the upload page)
 POST   /api/upload-sessions/:token                (multipart from upload page; session cookie; owner only)
@@ -437,13 +445,13 @@ POST   /mcp
 | Screen | Purpose |
 |---|---|
 | Login / Signup | Simple, one demo account hint on the login page |
-| **Gallery** (home) | Tabs: *Mine* (default) · *All public* · *Shared with me*, as `?scope=`. Card grid with live thumbnails (image / first PDF page via `<img>`/iframe preview, HTML in a scaled sandboxed iframe), type badge, tags, owner, open-comment count, updated time. NL search bar + tag/type filters |
+| **Gallery** (home) | Tabs: *Mine* (default) · *Shared with me* · *Company*, as `?scope=mine|shared|public`. Card grid with live thumbnails (image / first PDF page via `<img>`/iframe preview, HTML in a scaled sandboxed iframe), type badge, tags, owner, open-comment count, updated time. NL search bar + tag/type filters |
 | **Artifact page** | Large viewer on the left; right panel tabs: *Feedback* (AI summary at top, threads with replies, resolve, version filter "this version / all versions"), *Versions* (list, switch, change notes), *Details* (metadata, edit if owner). Header actions: Share, Upload new version, Download, Open full screen |
-| **Share dialog** | Visibility toggle; create link (view/comment, anyone-with-link or emails with autocomplete of existing users, expiry presets: 1 day / 7 days / 30 days / never); list of active shares with copy + revoke |
-| **Publish dialog** | Drag-and-drop → AI pre-fill → edit → publish (visibility default private) |
+| **Share dialog** | A one-line summary of who can see it ("Only you can see it", "You and 2 people…", "Everyone at the company…"), then one tab per kind of access, each opening with a sentence on who it reaches. **People** (count badge): add by email with autocomplete of existing users, *Can view* / *Can comment*, version; list with change and remove. **Company** (*On* badge): switch + version. **Link** (step 14): switch, expiry (1 / 7 / 30 days, never), version, Copy and Reset link. Versions read *All versions* (follows the latest, history included) or *Only vN*. Changes save as they are made. Footer: *Copy link* (the artifact's own URL, for signed-in colleagues) |
+| **Publish dialog** | Drag-and-drop → AI pre-fill → edit → publish. Artifacts start private; access is set in the share dialog |
 | **Upload page** (`/upload/:token`) | Landing page for the MCP binary flow: shows the artifact name the agent created, a drop zone, and a success state ("You can return to your conversation") |
 | **Settings** | API tokens + ready-to-copy Claude Desktop config |
-| Share link (`/s/:token`) | Login if needed → redeem → redirect to artifact page; clear "expired / revoked" state |
+| Share link (`/s/:token`) | Step 14. Public page outside the app shell: title, owner, viewer, Download; *Open in Artifact Hub* for signed-in users who have access; clear "expired / turned off" state |
 
 ---
 
@@ -469,11 +477,13 @@ SESSION_TTL_DAYS=7, COOKIE_SECURE=true
 STORAGE_DRIVER=local, STORAGE_LOCAL_ROOT=/data/blobs
   (s3: S3_BUCKET, S3_REGION, S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY)
   (azure: AZURE_STORAGE_CONNECTION_STRING, AZURE_CONTAINER)
+SHARE_LINK_KEY                     (step 14: 32 bytes, base64; encrypts share link tokens)
 MAX_ARTIFACT_BYTES=10485760
 UPLOAD_SESSION_TTL_MINUTES=30
 AI_ENABLED=true, ANTHROPIC_API_KEY, AI_MODEL_FAST, AI_MODEL_SMART  (all optional; app runs without them)
 AI_TIMEOUT_MS=8000, AI_CIRCUIT_FAILURE_THRESHOLD=5, AI_CIRCUIT_COOLDOWN_SECONDS=60
 RATE_LIMIT_LOGIN_PER_IP=20, RATE_LIMIT_LOGIN_PER_EMAIL=10, RATE_LIMIT_LOGIN_WINDOW_SECONDS=900
+RATE_LIMIT_USER_SEARCH_PER_MINUTE=60   (per user, share dialog autocomplete)
 RATE_LIMIT_* (upload, ai: added with those features)
 SEED_DEMO=true
 ```
@@ -483,7 +493,7 @@ SEED_DEMO=true
 ## 16. Testing strategy
 
 - **Unit:**
-  - `AccessPolicy` (full matrix of roles × visibility × share states)
+  - `AccessPolicy` (full matrix of roles × visibility × status × deleted × action × transport, plus version pinning across company access and people)
   - content-type detection
   - local storage driver (traversal, atomic writes)
   - idempotency service
@@ -492,7 +502,7 @@ SEED_DEMO=true
 - **E2E (supertest + real Postgres via compose):**
   - signup/login/session
   - publish → version → comment/reply/resolve
-  - share flows (expiry, revoke, specific users, anyone-with-link)
+  - sharing: people (unknown emails, upsert, change, remove), company access, pinned versions across access levels, *Shared with me*, user search and its rate limit; step 14: links without sign-in (expiry, reset, turn off)
   - upload sessions: single-use, expiry, release on failed validation, browser + `PUT` paths; rejected without auth, with another user's cookie/token, or with a valid token but a different session
   - size limit
   - 404-on-no-access
@@ -526,9 +536,9 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 11. ✅ New versions, metadata edits, soft delete, and the Versions and Details tabs.
 
 **Access and sharing**
-12. ✅ Public visibility and the *All public* tab, plus the full `AccessPolicy` test matrix.
-13. Anyone-with-link shares: expiry, revoke, redeem, and the `/s/:token` page.
-14. Shares to specific users, the *Shared with me* tab and the share dialog.
+12. ✅ Public visibility and the *All public* tab, plus the full `AccessPolicy` test matrix. (Step 13 renames the tab *Company* and moves the visibility choice into the share dialog.)
+13. ✅ Sharing inside the company: people (view/comment) and *Everyone at the company*, each with a pinned or latest version; the share dialog; *Shared with me*. (Replaces a first version with signed-in link shares, dropped for this simpler model.)
+14. *Anyone with the link* without sign-in: one link per artifact, expiry, reset, encrypted token, and the public `/s/:token` viewer with download.
 15. Plain full-text search and filters in the gallery.
 
 **Comments**
@@ -554,7 +564,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 **Ship**
 28. Seed data, thumbnails, polish, WRITEUP.md, walkthrough, session logs and the `.claude/` directory.
 
-**Cut line if behind** (drop in this order): NL search → falls back to plain full-text search; direct `PUT` upload (keep browser upload page); thumbnails → type icons.
+**Cut line if behind** (drop in this order): NL search → falls back to plain full-text search; direct `PUT` upload (keep browser upload page); thumbnails → type icons; links without sign-in (step 14) → sharing inside the company only.
 
 ---
 

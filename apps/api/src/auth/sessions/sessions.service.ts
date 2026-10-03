@@ -1,20 +1,15 @@
-import { createHash, randomBytes } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThan, type Repository } from 'typeorm';
 import { InjectEnv } from '../../config/config.module.js';
 import type { Env } from '../../config/config.types.js';
+import { generateSecretToken, hashSecretToken } from '../../common/tokens/secret-tokens.js';
 import type { ClientInfo, IssuedSession, ResolvedSession } from './sessions.types.js';
 import { Session } from './session.entity.js';
 
-const TOKEN_BYTES = 32;
 const USER_AGENT_MAX_LENGTH = 512;
 /** Extend a session at most this often, so active users don't cause a write per request. */
 const TOUCH_INTERVAL_MS = 5 * 60_000;
-
-export function hashSessionToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
 
 /** Server-side sessions. The browser holds a random token; the database holds its hash. */
 @Injectable()
@@ -29,11 +24,11 @@ export class SessionsService {
   }
 
   async create(userId: string, client: ClientInfo): Promise<IssuedSession> {
-    const token = randomBytes(TOKEN_BYTES).toString('base64url');
+    const token = generateSecretToken();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + this.ttlMs);
     await this.sessions.insert({
-      tokenHash: hashSessionToken(token),
+      tokenHash: hashSecretToken(token),
       userId,
       expiresAt,
       lastSeenAt: now,
@@ -47,7 +42,7 @@ export class SessionsService {
   async resolve(token: string): Promise<ResolvedSession | null> {
     const now = new Date();
     const session = await this.sessions.findOne({
-      where: { tokenHash: hashSessionToken(token), expiresAt: MoreThan(now) },
+      where: { tokenHash: hashSecretToken(token), expiresAt: MoreThan(now) },
       relations: { user: true },
     });
     if (!session) return null;
@@ -65,6 +60,6 @@ export class SessionsService {
   }
 
   async revoke(token: string): Promise<void> {
-    await this.sessions.delete({ tokenHash: hashSessionToken(token) });
+    await this.sessions.delete({ tokenHash: hashSecretToken(token) });
   }
 }

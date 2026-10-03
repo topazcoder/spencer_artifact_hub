@@ -8,12 +8,14 @@ import {
   type UpdateArtifactMetadata,
 } from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { DataSource, type EntityManager, IsNull, type Repository } from 'typeorm';
+import { DataSource, type EntityManager, In, IsNull, type Repository } from 'typeorm';
 import { z } from 'zod';
+import { AccessGrantsService } from '../access/access-grants.service.js';
 import {
   ARTIFACT_NOT_FOUND_MESSAGE,
   AccessPolicyService,
 } from '../access/access-policy.service.js';
+import type { AccessAction, AccessGrant, AccessTarget } from '../access/access.types.js';
 import type { Actor } from '../auth/auth.types.js';
 import { AppError } from '../common/errors/app-error.js';
 import { blobKeys } from '../storage/blob-keys.js';
@@ -27,7 +29,9 @@ import type {
   ArtifactContent,
   ArtifactListOptions,
   ArtifactPage,
+  ArtifactView,
   NewContent,
+  ResolvedArtifact,
   StoredContent,
 } from './artifacts.types.js';
 
@@ -44,6 +48,7 @@ export class ArtifactsService {
     private readonly inspector: ContentInspectorService,
     @InjectStorage() private readonly storage: StorageDriver,
     private readonly access: AccessPolicyService,
+    private readonly grants: AccessGrantsService,
     @InjectPinoLogger(ArtifactsService.name) private readonly logger: PinoLogger,
   ) {}
 
@@ -55,7 +60,7 @@ export class ArtifactsService {
     actor: Actor,
     metadata: CreateArtifactMetadata,
     content: NewContent,
-  ): Promise<Artifact> {
+  ): Promise<ArtifactView> {
     const artifactId = randomUUID();
     const log = { userId: actor.userId, artifactId, via: actor.via };
     this.logger.info(log, 'Publish received');
@@ -96,9 +101,8 @@ export class ArtifactsService {
     id: string,
     metadata: CreateVersionMetadata,
     content: NewContent,
-  ): Promise<Artifact> {
-    const artifact = await this.get(actor, id);
-    this.access.assertCan(actor, 'edit', artifact);
+  ): Promise<ArtifactView> {
+    const { artifact } = await this.getForAction(actor, id, 'edit');
     const versionNo = artifact.latestVersionNo + 1;
     const log = { userId: actor.userId, artifactId: artifact.id, via: actor.via };
     this.logger.info({ ...log, versionNo }, 'New version received');
@@ -135,19 +139,20 @@ export class ArtifactsService {
     return this.get(actor, artifact.id);
   }
 
-  /** Every version of the artifact, newest first. */
+  /** The versions the actor may see (all, unless a share limits them), newest first. */
   async listVersions(actor: Actor, id: string): Promise<ArtifactVersion[]> {
-    const artifact = await this.get(actor, id);
+    const { artifact, target } = await this.resolve(actor, id);
+    this.access.assertCan(actor, 'view', target);
+    const visible = this.access.visibleVersionIds(actor, target);
     return this.versions.find({
-      where: { artifactId: artifact.id },
+      where: { artifactId: artifact.id, ...(visible ? { id: In([...visible]) } : {}) },
       order: { versionNo: 'DESC' },
     });
   }
 
-  /** Changes title, description, tags or visibility. Never creates a version. Owner only. */
-  async update(actor: Actor, id: string, changes: UpdateArtifactMetadata): Promise<Artifact> {
-    const artifact = await this.get(actor, id);
-    this.access.assertCan(actor, 'edit', artifact);
+  /** Changes the title, description or tags. Never creates a version. Owner only. */
+  async update(actor: Actor, id: string, changes: UpdateArtifactMetadata): Promise<ArtifactView> {
+    const { artifact } = await this.getForAction(actor, id, 'edit');
 
     await this.artifacts.update({ id: artifact.id, deletedAt: IsNull() }, changes);
     this.logger.info(
@@ -163,8 +168,7 @@ export class ArtifactsService {
    * blobs are kept. Owner only.
    */
   async remove(actor: Actor, id: string): Promise<void> {
-    const artifact = await this.get(actor, id);
-    this.access.assertCan(actor, 'delete', artifact);
+    const { artifact } = await this.getForAction(actor, id, 'delete');
     await this.artifacts.update(
       { id: artifact.id, deletedAt: IsNull() },
       { deletedAt: new Date() },
@@ -172,35 +176,42 @@ export class ArtifactsService {
     this.logger.info({ userId: actor.userId, artifactId: artifact.id }, 'Artifact deleted');
   }
 
-  /** The artifact with its owner and current version. `NOT_FOUND` if missing or not visible. */
-  async get(actor: Actor, id: string): Promise<Artifact> {
-    const artifact = idSchema.safeParse(id).success
-      ? await this.artifacts.findOne({
-          where: { id },
-          relations: { owner: true, currentVersion: true },
-        })
-      : null;
-    if (!artifact) throw new AppError(ErrorCode.NOT_FOUND, ARTIFACT_NOT_FOUND_MESSAGE);
-    this.access.assertCan(actor, 'view', artifact);
-    return artifact;
+  /** The artifact as the actor sees it. `NOT_FOUND` if missing or not visible. */
+  get(actor: Actor, id: string): Promise<ArtifactView> {
+    return this.getForAction(actor, id, 'view');
+  }
+
+  /**
+   * The artifact as the actor sees it, if they may perform `action` on it (`NOT_FOUND` or
+   * `FORBIDDEN` otherwise, see `AccessPolicyService.assertCan`). For other modules acting on an
+   * artifact, e.g. sharing it.
+   */
+  async getForAction(actor: Actor, id: string, action: AccessAction): Promise<ArtifactView> {
+    const { artifact, target } = await this.resolve(actor, id);
+    this.access.assertCan(actor, action, target);
+    return this.toView(actor, artifact, target);
   }
 
   /**
    * The content of version `versionNo` (as given in the URL). `NOT_FOUND` if the artifact is
-   * not visible to the actor or has no such version.
+   * not visible to the actor, or has no such version that they may see.
    */
   async getContent(actor: Actor, id: string, versionNo: string): Promise<ArtifactContent> {
-    const artifact = await this.get(actor, id);
+    const { artifact, target } = await this.resolve(actor, id);
+    this.access.assertCan(actor, 'view', target);
     const version = VERSION_NO.test(versionNo)
       ? await this.versions.findOneBy({ artifactId: artifact.id, versionNo: Number(versionNo) })
       : null;
-    if (!version) throw new AppError(ErrorCode.NOT_FOUND, 'Version not found.');
+    const visible = this.access.visibleVersionIds(actor, target);
+    if (!version || (visible && !visible.has(version.id))) {
+      throw new AppError(ErrorCode.NOT_FOUND, 'Version not found.');
+    }
     return { artifact, version, open: () => this.storage.getStream(version.storageKey) };
   }
 
   /**
    * Published artifacts the actor may view, most recently updated first, optionally narrowed by
-   * `options` (e.g. `ownerId`, `visibility`). Filters only ever narrow what `AccessPolicy` allows.
+   * `options` (e.g. `ownerId`, `sharedWith`). Filters only ever narrow what `AccessPolicy` allows.
    */
   async list(actor: Actor, options: ArtifactListOptions): Promise<ArtifactPage> {
     const qb = this.artifacts
@@ -222,9 +233,74 @@ export class ArtifactsService {
     if (options.visibility) {
       qb.andWhere('artifact.visibility = :visibility', { visibility: options.visibility });
     }
+    if (options.sharedWith) {
+      qb.andWhere('artifact.ownerId != :sharedWith').andWhere(
+        `EXISTS (SELECT 1 FROM shares share
+                 WHERE share.artifact_id = artifact.id AND share.user_id = :sharedWith)`,
+        { sharedWith: options.sharedWith },
+      );
+    }
 
-    const [items, total] = await qb.getManyAndCount();
+    const [artifacts, total] = await qb.getManyAndCount();
+    const grants = await this.grants.forArtifacts(
+      actor,
+      artifacts.filter((artifact) => needsGrants(actor, artifact)).map((artifact) => artifact.id),
+    );
+    const items = await Promise.all(
+      artifacts.map((artifact) =>
+        this.toView(actor, artifact, accessTarget(artifact, grants.get(artifact.id) ?? [])),
+      ),
+    );
     return { items, total };
+  }
+
+  /** Loads the artifact and what access decisions need. `NOT_FOUND` if it doesn't exist. */
+  private async resolve(actor: Actor, id: string): Promise<ResolvedArtifact> {
+    const artifact = idSchema.safeParse(id).success
+      ? await this.artifacts.findOne({
+          where: { id },
+          relations: { owner: true, currentVersion: true },
+        })
+      : null;
+    if (!artifact) throw new AppError(ErrorCode.NOT_FOUND, ARTIFACT_NOT_FOUND_MESSAGE);
+    const grants = needsGrants(actor, artifact)
+      ? await this.grants.forArtifact(actor, artifact.id)
+      : [];
+    return { artifact, target: accessTarget(artifact, grants) };
+  }
+
+  /**
+   * What the actor sees of a viewable artifact: viewers limited to pinned versions see the
+   * newest of those as current, and nothing about later ones.
+   */
+  private async toView(
+    actor: Actor,
+    artifact: Artifact,
+    target: AccessTarget,
+  ): Promise<ArtifactView> {
+    const permissions = this.access.permissions(actor, target);
+    const visible = this.access.visibleVersionIds(actor, target);
+    if (!visible) {
+      return {
+        artifact,
+        currentVersion: artifact.currentVersion,
+        latestVersionNo: artifact.latestVersionNo,
+        permissions,
+      };
+    }
+    const currentVersion =
+      artifact.currentVersion && visible.has(artifact.currentVersion.id)
+        ? artifact.currentVersion
+        : await this.versions.findOne({
+            where: { artifactId: artifact.id, id: In([...visible]) },
+            order: { versionNo: 'DESC' },
+          });
+    return {
+      artifact,
+      currentVersion,
+      latestVersionNo: currentVersion?.versionNo ?? 0,
+      permissions,
+    };
   }
 
   /** Detects the content's type and stores it under a fresh key for `versionNo`. */
@@ -288,4 +364,25 @@ export class ArtifactsService {
       this.logger.warn({ ...log, err }, 'Could not delete the blob of a failed publish');
     }
   }
+}
+
+/**
+ * Whether the actor's shares can change what they may do or see. Not for their own artifacts,
+ * nor for public ones showing every version (company access already gives the most).
+ */
+function needsGrants(actor: Actor, artifact: Artifact): boolean {
+  if (artifact.ownerId === actor.userId) return false;
+  return artifact.visibility === 'private' || artifact.publicPinnedVersionId !== null;
+}
+
+function accessTarget(artifact: Artifact, grants: readonly AccessGrant[]): AccessTarget {
+  return {
+    id: artifact.id,
+    ownerId: artifact.ownerId,
+    visibility: artifact.visibility,
+    status: artifact.status,
+    deletedAt: artifact.deletedAt,
+    publicPinnedVersionId: artifact.publicPinnedVersionId,
+    grants,
+  };
 }

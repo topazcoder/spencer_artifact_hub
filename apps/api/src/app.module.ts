@@ -11,6 +11,7 @@ import { ConfigModule } from './config/config.module.js';
 import type { Env } from './config/config.types.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
+import { SharingModule } from './sharing/sharing.module.js';
 import { WebModule } from './web/web.module.js';
 
 @Module({})
@@ -25,6 +26,7 @@ export class AppModule {
         RateLimitModule,
         AuthModule,
         ArtifactsModule,
+        SharingModule,
         ClientConfigModule,
         HealthModule,
         WebModule.register(env.WEB_DIST_DIR),

@@ -3,6 +3,8 @@ import {
   type ArtifactMimeType,
   type ArtifactVersion,
   ErrorCode,
+  type ArtifactAccess,
+  type SharedPerson,
   type User,
 } from '@artifact-hub/shared';
 import { vi } from 'vitest';
@@ -28,6 +30,11 @@ const LIST_ROUTE = /^GET \/api\/artifacts\?(.*)$/;
 const ARTIFACT_ROUTE = /^(GET|PATCH|DELETE) \/api\/artifacts\/([^/?]+)$/;
 const VERSIONS_ROUTE = /^(GET|POST) \/api\/artifacts\/([^/?]+)\/versions$/;
 const CONTENT_ROUTE = /^GET \/api\/artifacts\/([^/?]+)\/versions\/(\d+)\/content$/;
+const ACCESS_ROUTE = /^GET \/api\/artifacts\/([^/?]+)\/access$/;
+const COMPANY_ROUTE = /^PUT \/api\/artifacts\/([^/?]+)\/access\/company$/;
+const PEOPLE_ROUTE = /^POST \/api\/artifacts\/([^/?]+)\/access\/people$/;
+const PERSON_ROUTE = /^(PATCH|DELETE) \/api\/artifacts\/([^/?]+)\/access\/people\/([^/?]+)$/;
+const USER_SEARCH_ROUTE = /^GET \/api\/users\/search\?(.*)$/;
 
 const MIME_BY_EXTENSION: Record<string, ArtifactMimeType> = {
   html: 'text/html',
@@ -63,6 +70,8 @@ export function installFakeApi() {
   >();
   /** Every publish (or new version) request's form, in the order its parts were appended. */
   const publishedForms: FormData[] = [];
+  /** Access settings by artifact id; artifacts without an entry are shared with nobody. */
+  const access = new Map<string, ArtifactAccess>();
   let nextPublishResponse: Response | null = null;
   let nextUpdateResponse: Response | null = null;
   let maxArtifactBytes = 10 * 1024 * 1024;
@@ -90,11 +99,12 @@ export function installFakeApi() {
       owner: { id: signedIn!.id, displayName: signedIn!.displayName },
       currentVersion: version,
       latestVersionNo: 1,
+      permissions: { comment: true, edit: true, share: true, delete: true },
       createdAt: now,
       updatedAt: now,
     };
     artifacts.set(artifact.id, { artifact, versions: [version], content: new Map([[1, file]]) });
-    return json(201, { artifact });
+    return json(201, { artifact: seen(artifact) });
   };
 
   const publishVersion = (id: string, form: FormData): Response => {
@@ -118,7 +128,82 @@ export function installFakeApi() {
       latestVersionNo: versionNo,
       updatedAt: new Date().toISOString(),
     };
-    return json(201, { artifact: stored.artifact });
+    return json(201, { artifact: seen(stored.artifact) });
+  };
+
+  /** `artifact` with the permissions the signed-in user has, as the server computes them. */
+  const seen = (artifact: Artifact): Artifact => {
+    const owner = artifact.owner.id === signedIn?.id;
+    const person = accessOf(artifact.id).people.find((p) => p.user.id === signedIn?.id);
+    return {
+      ...artifact,
+      permissions: {
+        comment: owner || artifact.visibility === 'public' || person?.permission === 'comment',
+        edit: owner,
+        share: owner,
+        delete: owner,
+      },
+    };
+  };
+
+  const accessOf = (artifactId: string): ArtifactAccess =>
+    access.get(artifactId) ?? { company: { enabled: false, pinnedVersionNo: null }, people: [] };
+
+  const changeAccess = (artifactId: string, next: ArtifactAccess): Response => {
+    access.set(artifactId, next);
+    const stored = artifacts.get(artifactId);
+    if (stored) {
+      stored.artifact = {
+        ...stored.artifact,
+        visibility: next.company.enabled ? 'public' : 'private',
+      };
+    }
+    return json(200, { access: next });
+  };
+
+  const sharePeople = (artifactId: string, body: Record<string, unknown>): Response => {
+    const emails = (body.emails as string[]).map((email) => email.trim().toLowerCase());
+    const unknownEmails = emails.filter((email) => !accounts.has(email));
+    if (unknownEmails.length > 0) {
+      return json(422, {
+        error: {
+          code: ErrorCode.SHARE_RECIPIENT_UNKNOWN,
+          message: `No one at Artifact Hub has these emails: ${unknownEmails.join(', ')}.`,
+          details: { unknownEmails },
+          requestId: 'test-req',
+        },
+      });
+    }
+    const current = accessOf(artifactId);
+    const added: SharedPerson[] = emails.map((email) => {
+      const { user } = accounts.get(email)!;
+      return {
+        user: { id: user.id, displayName: user.displayName, email: user.email },
+        permission: body.permission as SharedPerson['permission'],
+        pinnedVersionNo: (body.versionNo as number | null | undefined) ?? null,
+        sharedAt: new Date().toISOString(),
+      };
+    });
+    const people = [
+      ...current.people.filter((p) => !added.some((a) => a.user.id === p.user.id)),
+      ...added,
+    ];
+    const response = changeAccess(artifactId, { ...current, people });
+    return new Response(response.body, { status: 201, headers: response.headers });
+  };
+
+  const searchUsers = (query: URLSearchParams): Response => {
+    const q = (query.get('q') ?? '').toLowerCase();
+    const items = [...accounts.values()]
+      .map(({ user }) => user)
+      .filter((user) => user.id !== signedIn?.id)
+      .filter(
+        (user) =>
+          user.email.toLowerCase().startsWith(q) || user.displayName.toLowerCase().startsWith(q),
+      )
+      .slice(0, 5)
+      .map(({ id, displayName, email }) => ({ id, displayName, email }));
+    return json(200, { items });
   };
 
   const listArtifacts = (query: URLSearchParams): Response => {
@@ -127,11 +212,18 @@ export function installFakeApi() {
     const pageSize = Number(query.get('pageSize') ?? 24);
     const matching = [...artifacts.values()]
       .map(({ artifact }) => artifact)
-      .filter((artifact) =>
-        scope === 'public' ? artifact.visibility === 'public' : artifact.owner.id === signedIn?.id,
-      )
+      .filter((artifact) => {
+        if (scope === 'public') return artifact.visibility === 'public';
+        if (scope === 'shared') {
+          return (
+            artifact.owner.id !== signedIn?.id &&
+            accessOf(artifact.id).people.some((p) => p.user.id === signedIn?.id)
+          );
+        }
+        return artifact.owner.id === signedIn?.id;
+      })
       .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    const items = matching.slice((page - 1) * pageSize, page * pageSize);
+    const items = matching.slice((page - 1) * pageSize, page * pageSize).map(seen);
     return json(200, { items, page, pageSize, total: matching.length });
   };
 
@@ -148,6 +240,49 @@ export function installFakeApi() {
     if (route === 'POST /api/artifacts' && init.body instanceof FormData) {
       if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
       return publish(init.body);
+    }
+
+    const searchMatch = USER_SEARCH_ROUTE.exec(route);
+    if (searchMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      return searchUsers(new URLSearchParams(searchMatch[1]));
+    }
+    const accessMatch =
+      ACCESS_ROUTE.exec(route) ?? COMPANY_ROUTE.exec(route) ?? PEOPLE_ROUTE.exec(route);
+    if (accessMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      const artifactId = decodeURIComponent(accessMatch[1] ?? '');
+      if (!artifacts.has(artifactId)) return error(404, ErrorCode.NOT_FOUND, 'Artifact not found.');
+      if (route.startsWith('PUT')) {
+        return changeAccess(artifactId, {
+          ...accessOf(artifactId),
+          company: {
+            enabled: body.enabled,
+            pinnedVersionNo: body.enabled ? (body.versionNo ?? null) : null,
+          },
+        });
+      }
+      if (route.startsWith('POST')) return sharePeople(artifactId, body);
+      return json(200, { access: accessOf(artifactId) });
+    }
+    const personMatch = PERSON_ROUTE.exec(route);
+    if (personMatch) {
+      const [, method, id = '', userId = ''] = personMatch;
+      const artifactId = decodeURIComponent(id);
+      const current = accessOf(artifactId);
+      const people =
+        method === 'DELETE'
+          ? current.people.filter((p) => p.user.id !== userId)
+          : current.people.map((p) =>
+              p.user.id === userId
+                ? {
+                    ...p,
+                    ...(body.permission ? { permission: body.permission } : {}),
+                    ...(body.versionNo === undefined ? {} : { pinnedVersionNo: body.versionNo }),
+                  }
+                : p,
+            );
+      return changeAccess(artifactId, { ...current, people });
     }
 
     const versionsMatch = VERSIONS_ROUTE.exec(route);
@@ -189,7 +324,7 @@ export function installFakeApi() {
         }
         stored.artifact = { ...stored.artifact, ...body, updatedAt: new Date().toISOString() };
       }
-      return json(200, { artifact: stored.artifact });
+      return json(200, { artifact: seen(stored.artifact) });
     }
 
     switch (route) {
@@ -269,6 +404,26 @@ export function installFakeApi() {
         artifact,
         versions,
         content: new Map(versions.map((version) => [version.versionNo, content])),
+      });
+    },
+    /** Who the artifact is shared with, as the fake server has it. */
+    access(artifactId: string): ArtifactAccess {
+      return accessOf(artifactId);
+    },
+    /** Shares the artifact with `user`, as if its owner had. */
+    shareWith(artifactId: string, user: User, permission: SharedPerson['permission'] = 'view') {
+      const current = accessOf(artifactId);
+      access.set(artifactId, {
+        ...current,
+        people: [
+          ...current.people,
+          {
+            user: { id: user.id, displayName: user.displayName, email: user.email },
+            permission,
+            pinnedVersionNo: null,
+            sharedAt: new Date().toISOString(),
+          },
+        ],
       });
     },
     /** The artifact as the fake server currently has it, if it still exists. */

@@ -28,6 +28,7 @@ export const artifactMimeTypeSchema = z.enum(ARTIFACT_MIME_TYPES);
 
 export type ArtifactMimeType = z.infer<typeof artifactMimeTypeSchema>;
 
+/** `public` = everyone at the company (signed in) can view and comment. */
 export const ARTIFACT_VISIBILITIES = ['private', 'public'] as const;
 export const artifactVisibilitySchema = z.enum(ARTIFACT_VISIBILITIES);
 export type ArtifactVisibility = z.infer<typeof artifactVisibilitySchema>;
@@ -89,13 +90,15 @@ export const createArtifactRequestSchema = z.object({
 export type CreateArtifactRequest = z.input<typeof createArtifactRequestSchema>;
 export type CreateArtifactMetadata = z.output<typeof createArtifactRequestSchema>;
 
-/** Body of `PATCH /api/artifacts/:id`: only the fields to change. Never creates a version. */
+/**
+ * Body of `PATCH /api/artifacts/:id`: only the fields to change. Never creates a version.
+ * Access (including visibility) is changed through `/api/artifacts/:id/access`.
+ */
 export const updateArtifactRequestSchema = z
   .strictObject({
     title: artifactTitleSchema,
     description: artifactDescriptionSchema,
     tags: artifactTagsSchema,
-    visibility: artifactVisibilitySchema,
   })
   .partial()
   .refine((update) => Object.values(update).some((value) => value !== undefined), {
@@ -145,14 +148,26 @@ export const artifactSchema = z.object({
   status: z.enum(ARTIFACT_STATUSES),
   metadataSource: z.enum(METADATA_SOURCES),
   owner: z.object({ id: z.uuid(), displayName: z.string() }),
-  /** Null only for drafts. */
+  /**
+   * The newest version the requesting user may see (the latest, unless a share limits them to
+   * one). Null only for drafts.
+   */
   currentVersion: artifactVersionSchema.nullable(),
+  /** For viewers limited to one version by a share, that version's number. */
   latestVersionNo: z.number().int().nonnegative(),
+  /** What the requesting user may do; the server enforces it either way. */
+  permissions: z.object({
+    comment: z.boolean(),
+    edit: z.boolean(),
+    share: z.boolean(),
+    delete: z.boolean(),
+  }),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
 
 export type Artifact = z.infer<typeof artifactSchema>;
+export type ArtifactPermissions = Artifact['permissions'];
 
 /** Response of `POST /api/artifacts` and `GET /api/artifacts/:id`. */
 export const artifactResponseSchema = z.object({ artifact: artifactSchema });
@@ -171,11 +186,14 @@ export const ARTIFACT_LIST_MAX_PAGE_SIZE = 50;
 /** Caps the OFFSET a client can make the database skip. */
 export const ARTIFACT_LIST_MAX_PAGE = 1000;
 
-/** `mine`: published by me. `public`: every public artifact, mine included. */
-export const ARTIFACT_LIST_SCOPES = ['mine', 'public'] as const;
+/**
+ * `mine`: published by me. `shared`: shared with me by name. `public`: shared with everyone at
+ * the company, mine included.
+ */
+export const ARTIFACT_LIST_SCOPES = ['mine', 'shared', 'public'] as const;
 export type ArtifactListScope = (typeof ARTIFACT_LIST_SCOPES)[number];
 
-/** Query of `GET /api/artifacts`. `shared` joins the scopes with sharing (step 14). */
+/** Query of `GET /api/artifacts`. */
 export const artifactListQuerySchema = z.object({
   scope: z.enum(ARTIFACT_LIST_SCOPES).default('mine'),
   /** 1-based. */

@@ -39,6 +39,7 @@ function artifact(mimeType: ArtifactMimeType, overrides: Partial<Artifact> = {})
       createdAt: now,
     },
     latestVersionNo: 2,
+    permissions: { comment: true, edit: true, share: true, delete: true },
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -263,18 +264,6 @@ describe('artifact page: versions and editing', () => {
     const savedTags = within(screen.getByRole('list', { name: 'Tags' })).getAllByRole('listitem');
     expect(savedTags.map((tag) => tag.textContent)).toEqual(['launch']);
     expect(api.artifact(item.id)).toMatchObject({ title: 'Pricing v2', latestVersionNo: 3 });
-  });
-
-  it('makes the artifact public from the details form', async () => {
-    const { item, user } = showVersioned();
-    await user.click(await screen.findByRole('button', { name: 'Edit details' }));
-    expect(screen.getByRole('radio', { name: /Private/ })).toHaveProperty('checked', true);
-    await user.click(screen.getByRole('radio', { name: /Public/ }));
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-
-    expect(await screen.findByText('Public')).toBeTruthy();
-    expect(screen.queryByText('Private')).toBeNull();
-    expect(api.artifact(item.id)?.visibility).toBe('public');
   });
 
   it('shows validation errors from the server on their fields', async () => {

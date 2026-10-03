@@ -12,7 +12,6 @@ describe('metadataFormSchema', () => {
       title: 'Pricing',
       description: '',
       tags: ['marketing', 'q3'],
-      visibility: 'private',
     });
   });
 

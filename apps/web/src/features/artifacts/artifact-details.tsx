@@ -12,10 +12,9 @@ import type { MetadataFormOutput, MetadataFormValues } from './artifacts.types.t
 import { DeleteArtifactDialog } from './delete-artifact-dialog.tsx';
 import { metadataFormSchema } from './metadata-form-schema.ts';
 import { useUpdateArtifact } from './use-artifacts.ts';
-import { VisibilityField } from './visibility-field.tsx';
 
 /** The Details tab: description, tags and dates; the owner can edit them or delete the artifact. */
-export function ArtifactDetails({ artifact, canEdit }: { artifact: Artifact; canEdit: boolean }) {
+export function ArtifactDetails({ artifact }: { artifact: Artifact }) {
   const [editing, setEditing] = useState(false);
 
   if (editing) {
@@ -41,25 +40,29 @@ export function ArtifactDetails({ artifact, canEdit }: { artifact: Artifact; can
         <dt>Created</dt>
         <dd className="text-foreground">{new Date(artifact.createdAt).toLocaleString()}</dd>
       </dl>
-      {canEdit ? (
+      {artifact.permissions.edit || artifact.permissions.delete ? (
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-            <PencilIcon aria-hidden="true" />
-            Edit details
-          </Button>
-          <DeleteArtifactDialog artifact={artifact}>
-            <Button variant="outline" size="sm" className="text-destructive">
-              <Trash2Icon aria-hidden="true" />
-              Delete
+          {artifact.permissions.edit ? (
+            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              <PencilIcon aria-hidden="true" />
+              Edit details
             </Button>
-          </DeleteArtifactDialog>
+          ) : null}
+          {artifact.permissions.delete ? (
+            <DeleteArtifactDialog artifact={artifact}>
+              <Button variant="outline" size="sm" className="text-destructive">
+                <Trash2Icon aria-hidden="true" />
+                Delete
+              </Button>
+            </DeleteArtifactDialog>
+          ) : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-/** Edits the title, description, tags and visibility. Saving never creates a version. */
+/** Edits the title, description and tags. Saving never creates a version. */
 function DetailsForm({ artifact, onDone }: { artifact: Artifact; onDone: () => void }) {
   const update = useUpdateArtifact(artifact.id);
   const {
@@ -73,7 +76,6 @@ function DetailsForm({ artifact, onDone }: { artifact: Artifact; onDone: () => v
       title: artifact.title,
       description: artifact.description,
       tags: artifact.tags.join(', '),
-      visibility: artifact.visibility,
     },
   });
 
@@ -83,7 +85,7 @@ function DetailsForm({ artifact, onDone }: { artifact: Artifact; onDone: () => v
       toast.success('Details saved');
       onDone();
     } catch (error) {
-      applyServerError(error, setError, ['title', 'description', 'tags', 'visibility']);
+      applyServerError(error, setError, ['title', 'description', 'tags']);
     }
   });
 
@@ -103,7 +105,6 @@ function DetailsForm({ artifact, onDone }: { artifact: Artifact; onDone: () => v
         error={errors.tags?.message}
         {...register('tags')}
       />
-      <VisibilityField disabled={isSubmitting} {...register('visibility')} />
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" disabled={isSubmitting} onClick={onDone}>
           Cancel

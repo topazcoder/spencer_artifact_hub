@@ -25,7 +25,6 @@ import { fileProblem } from './file-checks.ts';
 import { FileDropZone } from './file-drop-zone.tsx';
 import { metadataFormSchema } from './metadata-form-schema.ts';
 import { usePublishArtifact } from './use-artifacts.ts';
-import { VisibilityField } from './visibility-field.tsx';
 
 /** Opens the publish dialog from `children` (the trigger button). */
 export function PublishDialog({ children }: { children: ReactNode }) {
@@ -53,9 +52,7 @@ export function PublishDialog({ children }: { children: ReactNode }) {
       <DialogContent className="flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Publish an artifact</DialogTitle>
-          <DialogDescription>
-            Choose who can see it. You can change this, or share it, later.
-          </DialogDescription>
+          <DialogDescription>Only you can see it until you share it.</DialogDescription>
         </DialogHeader>
         <PublishForm
           onSubmit={(file, metadata) => publish.mutateAsync({ file, metadata })}
@@ -85,7 +82,7 @@ function PublishForm({
     formState: { errors, isSubmitting },
   } = useForm<MetadataFormValues, unknown, MetadataFormOutput>({
     resolver: zodResolver(metadataFormSchema),
-    defaultValues: { title: '', description: '', tags: '', visibility: 'private' },
+    defaultValues: { title: '', description: '', tags: '' },
   });
 
   const chooseFile = (chosen: File) => {
@@ -111,7 +108,7 @@ function PublishForm({
         setFileError(error.message);
         return;
       }
-      applyServerError(error, setError, ['title', 'description', 'tags', 'visibility']);
+      applyServerError(error, setError, ['title', 'description', 'tags']);
     }
   });
 
@@ -148,7 +145,6 @@ function PublishForm({
           error={errors.tags?.message}
           {...register('tags')}
         />
-        <VisibilityField disabled={isSubmitting} {...register('visibility')} />
       </div>
       <DialogFooter>
         <DialogClose asChild>

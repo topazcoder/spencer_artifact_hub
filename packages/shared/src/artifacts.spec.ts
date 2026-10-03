@@ -55,7 +55,8 @@ describe('updateArtifactRequestSchema', () => {
   it.each([
     [{}, ''],
     [{ title: '' }, 'title'],
-    [{ visibility: 'secret' }, 'visibility'],
+    // Access is changed through /access, not here.
+    [{ visibility: 'public' }, ''],
     [{ ownerId: 'x' }, ''],
   ])('rejects %j at "%s"', (input, path) => {
     const result = updateArtifactRequestSchema.safeParse(input);

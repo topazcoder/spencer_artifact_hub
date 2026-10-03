@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { Artifact } from '@artifact-hub/shared';
+import type { Artifact, User } from '@artifact-hub/shared';
 import { cleanup, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,13 +8,14 @@ import { renderApp } from '@/test/render-app.tsx';
 
 describe('gallery', () => {
   let api: ReturnType<typeof installFakeApi>;
+  let account: User;
   let me: Artifact['owner'];
 
   beforeEach(() => {
     api = installFakeApi();
-    const user = api.addAccount('ada@example.com', 'correct horse');
-    api.signIn(user);
-    me = { id: user.id, displayName: user.displayName };
+    account = api.addAccount('ada@example.com', 'correct horse');
+    api.signIn(account);
+    me = { id: account.id, displayName: account.displayName };
   });
 
   afterEach(() => {
@@ -52,6 +53,7 @@ describe('gallery', () => {
         createdAt: updatedAt,
       },
       latestVersionNo: 1,
+      permissions: { comment: true, edit: true, share: true, delete: true },
       createdAt: updatedAt,
       updatedAt,
     };
@@ -103,7 +105,7 @@ describe('gallery', () => {
     expect(api.calls('GET /api/artifacts?scope=mine&page=1&pageSize=24')).toBe(1);
   });
 
-  it('switches to every public artifact, mine included, and back', async () => {
+  it('switches to what is shared with the company, mine included, and back', async () => {
     api.addArtifact(artifact('My private', 1));
     api.addArtifact(artifact('My public', 2, me, 'public'));
     api.addArtifact(artifact("Bob's public", 3, bob, 'public'));
@@ -114,17 +116,17 @@ describe('gallery', () => {
     expect(await screen.findByRole('heading', { name: 'My artifacts', level: 1 })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Mine' }).getAttribute('aria-current')).toBe('page');
 
-    await user.click(screen.getByRole('link', { name: 'All public' }));
+    await user.click(screen.getByRole('link', { name: 'Company' }));
     expect(app.location()).toBe('/?scope=public');
-    expect(await screen.findByRole('heading', { name: 'Public artifacts', level: 1 })).toBeTruthy();
+    expect(
+      await screen.findByRole('heading', { name: 'Shared with the company', level: 1 }),
+    ).toBeTruthy();
     expect(await screen.findByText('2 artifacts')).toBeTruthy();
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
       'My public',
       "Bob's public",
     ]);
-    expect(screen.getByRole('link', { name: 'All public' }).getAttribute('aria-current')).toBe(
-      'page',
-    );
+    expect(screen.getByRole('link', { name: 'Company' }).getAttribute('aria-current')).toBe('page');
 
     await user.click(screen.getByRole('link', { name: 'Mine' }));
     expect(app.location()).toBe('/');
@@ -139,10 +141,33 @@ describe('gallery', () => {
     );
   });
 
-  it('explains an empty public gallery', async () => {
+  it('explains empty shared galleries', async () => {
     api.addArtifact(artifact('My private', 1));
     renderApp('/?scope=public');
-    expect(await screen.findByRole('heading', { name: 'No public artifacts yet' })).toBeTruthy();
+    expect(
+      await screen.findByRole('heading', { name: 'Nothing shared with the company yet' }),
+    ).toBeTruthy();
+    cleanup();
+    renderApp('/?scope=shared');
+    expect(
+      await screen.findByRole('heading', { name: 'Nothing shared with you yet' }),
+    ).toBeTruthy();
+  });
+
+  it('lists what colleagues shared with me by name', async () => {
+    const shared = artifact('From Bob', 1, bob);
+    api.addArtifact(shared);
+    api.addArtifact(artifact("Bob's other", 2, bob));
+    api.addArtifact(artifact('Mine', 3));
+    api.shareWith(shared.id, account);
+    const app = renderApp('/');
+
+    await userEvent.setup().click(await screen.findByRole('link', { name: 'Shared with me' }));
+    expect(app.location()).toBe('/?scope=shared');
+    expect(await screen.findByText('1 artifact')).toBeTruthy();
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+      'From Bob',
+    ]);
   });
 
   it('treats an unknown scope as mine', async () => {

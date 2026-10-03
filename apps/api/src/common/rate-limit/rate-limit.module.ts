@@ -6,12 +6,22 @@ import type { Env } from '../../config/config.types.js';
 
 export const LOGIN_IP_THROTTLER = 'login-ip';
 export const LOGIN_EMAIL_THROTTLER = 'login-email';
+export const USER_SEARCH_THROTTLER = 'user-search';
+
+/** Every login and signup throttler, for routes that only want the others. */
+export const LOGIN_THROTTLERS = [LOGIN_IP_THROTTLER, LOGIN_EMAIL_THROTTLER] as const;
 
 /** Counts attempts per submitted email, so spreading guesses over many IPs doesn't help. */
 function emailTracker(req: Record<string, unknown>): string {
   const { body, ip } = req as unknown as Request;
   const email: unknown = body?.email;
   return typeof email === 'string' ? `email:${email.trim().toLowerCase()}` : `ip:${ip}`;
+}
+
+/** Counts per signed-in user (the session guard runs first), falling back to the IP. */
+function userTracker(req: Record<string, unknown>): string {
+  const { auth, ip } = req as unknown as Request;
+  return auth ? `user:${auth.actor.userId}` : `ip:${ip}`;
 }
 
 /**
@@ -34,6 +44,12 @@ function emailTracker(req: Record<string, unknown>): string {
               ttl,
               limit: env.RATE_LIMIT_LOGIN_PER_EMAIL,
               getTracker: emailTracker,
+            },
+            {
+              name: USER_SEARCH_THROTTLER,
+              ttl: seconds(60),
+              limit: env.RATE_LIMIT_USER_SEARCH_PER_MINUTE,
+              getTracker: userTracker,
             },
           ],
         };

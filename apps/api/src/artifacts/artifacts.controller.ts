@@ -16,6 +16,7 @@ import {
 import {
   type ArtifactListQuery,
   type ArtifactListResponse,
+  type ArtifactListScope,
   type ArtifactResponse,
   type ArtifactVersionListResponse,
   ErrorCode,
@@ -38,12 +39,23 @@ import { readMultipartUpload } from '../uploads/multipart/read-multipart-upload.
 import { toArtifactVersionDto } from './artifact-version.entity.js';
 import { toArtifactDto } from './artifact.entity.js';
 import { ArtifactsService } from './artifacts.service.js';
+import type { ArtifactListOptions } from './artifacts.types.js';
 import { attachmentDisposition, downloadFilename } from './content/content-disposition.js';
 import {
   CONTENT_SECURITY_HEADERS,
   etagMatches,
   servedContentType,
 } from './content/content-headers.js';
+
+/** What each gallery scope narrows the list to. */
+const SCOPE_FILTERS: Record<
+  ArtifactListScope,
+  (actor: Actor) => Pick<ArtifactListOptions, 'ownerId' | 'sharedWith' | 'visibility'>
+> = {
+  mine: (actor) => ({ ownerId: actor.userId }),
+  shared: (actor) => ({ sharedWith: actor.userId }),
+  public: () => ({ visibility: 'public' }),
+};
 
 /** The multipart field with the JSON metadata; it must come before the `file` field. */
 const METADATA_FIELD = 'metadata';
@@ -110,7 +122,7 @@ export class ArtifactsController {
   ): Promise<ArtifactListResponse> {
     const { scope, page, pageSize } = query;
     const { items, total } = await this.artifacts.list(actor, {
-      ...(scope === 'mine' ? { ownerId: actor.userId } : { visibility: 'public' }),
+      ...SCOPE_FILTERS[scope](actor),
       page,
       pageSize,
     });

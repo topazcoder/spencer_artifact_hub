@@ -18,7 +18,10 @@ import {
 } from '@artifact-hub/shared';
 import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
-import { LOGIN_EMAIL_THROTTLER } from '../common/rate-limit/rate-limit.module.js';
+import {
+  LOGIN_EMAIL_THROTTLER,
+  USER_SEARCH_THROTTLER,
+} from '../common/rate-limit/rate-limit.module.js';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe.js';
 import { toUserDto } from '../users/user.entity.js';
 import { CurrentActor, Public } from './auth.decorators.js';
@@ -36,7 +39,7 @@ export class AuthController {
   @Public()
   @Post('signup')
   @UseGuards(ThrottlerGuard)
-  @SkipThrottle({ [LOGIN_EMAIL_THROTTLER]: true })
+  @SkipThrottle({ [LOGIN_EMAIL_THROTTLER]: true, [USER_SEARCH_THROTTLER]: true })
   async signup(
     @Body(new ZodValidationPipe(signupRequestSchema)) body: SignupRequest,
     @Req() req: Request,
@@ -49,6 +52,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @UseGuards(ThrottlerGuard)
+  @SkipThrottle({ [USER_SEARCH_THROTTLER]: true })
   async login(
     @Body(new ZodValidationPipe(loginRequestSchema)) body: LoginRequest,
     @Req() req: Request,

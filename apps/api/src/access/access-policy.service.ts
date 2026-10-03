@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ErrorCode } from '@artifact-hub/shared';
+import { type ArtifactPermissions, ErrorCode } from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Brackets, type ObjectLiteral, type SelectQueryBuilder } from 'typeorm';
 import type { Actor } from '../auth/auth.types.js';
@@ -16,9 +16,13 @@ const OWNER_ONLY_ACTIONS: ReadonlySet<AccessAction> = new Set(['edit', 'share', 
  * through it.
  *
  * - The owner may do everything, drafts included.
- * - Anyone may view and comment on a published `public` artifact.
- * - Nobody else gets anything (shares extend this in steps 13–14). Deleted artifacts are gone
- *   for everyone.
+ * - Everyone at the company may view and comment on a published `public` artifact.
+ * - A share lets its user view a published artifact, and comment if its permission is
+ *   `comment`.
+ * - Company access and each share show the latest version or one pinned version.
+ * - Nobody else gets anything. Deleted artifacts are gone for everyone.
+ *
+ * Links that work without signing in are checked by their own endpoints (step 14).
  */
 @Injectable()
 export class AccessPolicyService {
@@ -26,6 +30,16 @@ export class AccessPolicyService {
 
   can(actor: Actor, action: AccessAction, artifact: AccessTarget): boolean {
     return this.denialReason(actor, action, artifact) === null;
+  }
+
+  /** Everything beyond viewing that `actor` may do, for clients to show the right actions. */
+  permissions(actor: Actor, artifact: AccessTarget): ArtifactPermissions {
+    return {
+      comment: this.can(actor, 'comment', artifact),
+      edit: this.can(actor, 'edit', artifact),
+      share: this.can(actor, 'share', artifact),
+      delete: this.can(actor, 'delete', artifact),
+    };
   }
 
   /**
@@ -48,6 +62,25 @@ export class AccessPolicyService {
   }
 
   /**
+   * The versions `actor` may see, by id: `null` for all of them, or the pinned versions of
+   * the access they have, when all of it is pinned. Empty when they may not view the artifact.
+   */
+  visibleVersionIds(actor: Actor, artifact: AccessTarget): ReadonlySet<string> | null {
+    if (!this.can(actor, 'view', artifact)) return new Set();
+    if (artifact.ownerId === actor.userId) return null;
+    const pinned = new Set<string>();
+    const shown = [
+      ...(artifact.visibility === 'public' ? [artifact.publicPinnedVersionId] : []),
+      ...artifact.grants.map((grant) => grant.pinnedVersionId),
+    ];
+    for (const versionId of shown) {
+      if (versionId === null) return null;
+      pinned.add(versionId);
+    }
+    return pinned;
+  }
+
+  /**
    * Narrows a query on artifacts (selected as `alias`) to those `actor` may view: the SQL form
    * of `can(actor, 'view', …)`, for lists. Keep the two in step.
    */
@@ -56,15 +89,19 @@ export class AccessPolicyService {
     alias: string,
     actor: Actor,
   ): SelectQueryBuilder<T> {
-    return qb
-      .andWhere(`${alias}.deletedAt IS NULL`)
-      .andWhere(
-        new Brackets((visible) =>
-          visible
-            .where(`${alias}.ownerId = :accessViewerId`, { accessViewerId: actor.userId })
-            .orWhere(`(${alias}.visibility = 'public' AND ${alias}.status = 'published')`),
-        ),
-      );
+    return qb.andWhere(`${alias}.deletedAt IS NULL`).andWhere(
+      new Brackets((visible) =>
+        visible
+          .where(`${alias}.ownerId = :accessViewerId`, { accessViewerId: actor.userId })
+          .orWhere(`(${alias}.visibility = 'public' AND ${alias}.status = 'published')`)
+          .orWhere(
+            `(${alias}.status = 'published' AND EXISTS (
+              SELECT 1 FROM shares share
+              WHERE share.artifact_id = ${alias}.id AND share.user_id = :accessViewerId
+            ))`,
+          ),
+      ),
+    );
   }
 
   private denialReason(
@@ -75,8 +112,15 @@ export class AccessPolicyService {
     if (artifact.deletedAt) return 'deleted';
     if (artifact.ownerId === actor.userId) return null;
     if (artifact.status !== 'published') return 'draft';
-    if (artifact.visibility !== 'public') return 'private';
+    if (artifact.visibility !== 'public' && artifact.grants.length === 0) return 'private';
     if (OWNER_ONLY_ACTIONS.has(action)) return 'owner_only';
+    if (
+      action === 'comment' &&
+      artifact.visibility !== 'public' &&
+      !artifact.grants.some((grant) => grant.permission === 'comment')
+    ) {
+      return 'view_only';
+    }
     return null;
   }
 }

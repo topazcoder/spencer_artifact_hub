@@ -18,6 +18,7 @@ import {
 } from 'typeorm';
 import { User } from '../users/user.entity.js';
 import { ArtifactVersion, toArtifactVersionDto } from './artifact-version.entity.js';
+import type { ArtifactView } from './artifacts.types.js';
 
 @Entity('artifacts')
 export class Artifact {
@@ -41,8 +42,13 @@ export class Artifact {
   @Column('text', { array: true })
   tags: string[];
 
+  /** `public` = everyone at the company can view and comment. */
   @Column({ type: 'enum', enum: ARTIFACT_VISIBILITIES, enumName: 'artifact_visibility' })
   visibility: ArtifactVisibility;
+
+  /** The version everyone at the company sees when public; null = always the latest. */
+  @Column({ type: 'uuid', nullable: true })
+  publicPinnedVersionId: string | null;
 
   @Column({ type: 'uuid', nullable: true })
   currentVersionId: string | null;
@@ -71,8 +77,13 @@ export class Artifact {
   deletedAt: Date | null;
 }
 
-/** Requires `owner` and `currentVersion` to be loaded. */
-export function toArtifactDto(artifact: Artifact): ArtifactDto {
+/** Requires `owner` to be loaded. */
+export function toArtifactDto({
+  artifact,
+  currentVersion,
+  latestVersionNo,
+  permissions,
+}: ArtifactView): ArtifactDto {
   return {
     id: artifact.id,
     title: artifact.title,
@@ -82,8 +93,9 @@ export function toArtifactDto(artifact: Artifact): ArtifactDto {
     status: artifact.status,
     metadataSource: artifact.metadataSource,
     owner: { id: artifact.owner.id, displayName: artifact.owner.displayName },
-    currentVersion: artifact.currentVersion ? toArtifactVersionDto(artifact.currentVersion) : null,
-    latestVersionNo: artifact.latestVersionNo,
+    currentVersion: currentVersion ? toArtifactVersionDto(currentVersion) : null,
+    latestVersionNo,
+    permissions,
     createdAt: artifact.createdAt.toISOString(),
     updatedAt: artifact.updatedAt.toISOString(),
   };

@@ -564,7 +564,8 @@ describe('Artifacts (e2e)', () => {
       });
     });
 
-    it.each([{}, { title: '' }, { ownerId: randomUUID() }, { visibility: 'secret' }])(
+    // Visibility is changed through /access (sharing.e2e-spec.ts), not here.
+    it.each([{}, { title: '' }, { ownerId: randomUUID() }, { visibility: 'public' }])(
       'rejects %j',
       async (body) => {
         const id = await publishedId(ada);
@@ -656,20 +657,6 @@ describe('Artifacts (e2e)', () => {
 
       expect(await publicIds(bob, ids)).toEqual([second, first]);
       expect(await publicIds(dave, ids)).toEqual([second, first]);
-    });
-
-    it('follows visibility changes at once', async () => {
-      const id = await publishedId(ada);
-      await get(bob, id).expect(404);
-
-      await patch(ada, id, { visibility: 'public' }).expect(200);
-      await get(bob, id).expect(200);
-      expect(await publicIds(bob, [id])).toEqual([id]);
-
-      await patch(ada, id, { visibility: 'private' }).expect(200);
-      await get(bob, id).expect(404);
-      await content(bob, id).expect(404);
-      expect(await publicIds(bob, [id])).toEqual([]);
     });
 
     it('hides deleted public artifacts', async () => {

@@ -13,8 +13,14 @@ Known limitations of the current build, and planned improvements.
 **Planned:**
 - Add SSO (OIDC — e.g. Google Workspace / Microsoft Entra ID) as the primary login, so emails are verified by the identity provider.
 - Restrict signup to company domains; disable password signup once SSO is live (or require email verification for it).
-- Allow sharing with emails that are not registered yet: create a pending grant that is attached to the account on first SSO login. Schema change: add a separate `share_invites(share_id, email)` table, converted into `share_recipients` rows on first login. `share_recipients` itself keeps a strict `user_id` foreign key.
+- Allow sharing with emails that are not registered yet: create a pending grant that is attached to the account on first SSO login. Schema change: add a separate `share_invites(artifact_id, email, permission, pinned_version_id)` table, converted into `shares` rows on first login. `shares` itself keeps a strict `user_id` foreign key.
 - Add group/team-based sharing synced from the identity provider.
+
+### Sharing
+- Several named links per artifact (e.g. one per client), each with its own expiry and version, revocable separately. One link per artifact covers the common case for now.
+- Expiry for people and for company access (today only the link expires).
+- Comments from link visitors, with a guest name and spam protection.
+- Notify people when something is shared with them (see Platform).
 
 ### Password lifecycle
 - Password reset via email, password change, and session management UI ("log out other devices").

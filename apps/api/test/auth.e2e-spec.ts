@@ -4,7 +4,7 @@ import { apiErrorBodySchema, authResponseSchema, ErrorCode } from '@artifact-hub
 import request, { type Response } from 'supertest';
 import { DataSource } from 'typeorm';
 import { SESSION_COOKIE } from '../src/auth/sessions/session-cookie.service.js';
-import { hashSessionToken } from '../src/auth/sessions/sessions.service.js';
+import { hashSecretToken } from '../src/common/tokens/secret-tokens.js';
 import { createTestApp } from './create-test-app.js';
 import { TEST_ORIGIN } from './test-env.js';
 
@@ -166,7 +166,7 @@ describe('Auth (e2e)', () => {
     it('stores only the SHA-256 of the token', async () => {
       const { token, userId } = await newUser();
       const rows = await db.query('SELECT token_hash FROM sessions WHERE user_id = $1', [userId]);
-      expect(rows).toEqual([{ token_hash: hashSessionToken(token) }]);
+      expect(rows).toEqual([{ token_hash: hashSecretToken(token) }]);
     });
 
     it('rejects requests without a session', async () => {
@@ -183,14 +183,14 @@ describe('Auth (e2e)', () => {
       const { token } = await newUser();
       await db.query(
         "UPDATE sessions SET expires_at = now() - interval '1 second' WHERE token_hash = $1",
-        [hashSessionToken(token)],
+        [hashSecretToken(token)],
       );
       await me(token).expect(401);
     });
 
     it('extends the session of an active user and re-sends the cookie', async () => {
       const { token } = await newUser();
-      const tokenHash = hashSessionToken(token);
+      const tokenHash = hashSecretToken(token);
 
       // Just created: no write, no new cookie.
       expect(sessionSetCookie(await me(token).expect(200))).toBeUndefined();
@@ -219,7 +219,7 @@ describe('Auth (e2e)', () => {
       expect(sessionSetCookie(res)).toMatch(/Expires=Thu, 01 Jan 1970/);
       await me(token).expect(401);
       const rows = await db.query('SELECT 1 FROM sessions WHERE token_hash = $1', [
-        hashSessionToken(token),
+        hashSecretToken(token),
       ]);
       expect(rows).toHaveLength(0);
     });

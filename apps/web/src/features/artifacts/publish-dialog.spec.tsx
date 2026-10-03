@@ -43,9 +43,6 @@ describe('publish dialog', () => {
     await user.type(title, 'Pricing page');
     await user.type(screen.getByLabelText('Description'), 'New tiers');
     await user.type(screen.getByLabelText('Tags'), 'Marketing, q3, marketing');
-    // Private by default.
-    expect(screen.getByRole('radio', { name: /Private/ })).toHaveProperty('checked', true);
-    await user.click(screen.getByRole('radio', { name: /Public/ }));
     await user.click(screen.getByRole('button', { name: 'Publish' }));
 
     expect(await screen.findByRole('heading', { name: 'Pricing page', level: 1 })).toBeTruthy();
@@ -59,7 +56,6 @@ describe('publish dialog', () => {
       title: 'Pricing page',
       description: 'New tiers',
       tags: ['marketing', 'q3'],
-      visibility: 'public',
     });
     expect((form!.get('file') as File).name).toBe('pricing-page.html');
   });

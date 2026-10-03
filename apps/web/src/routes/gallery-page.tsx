@@ -15,7 +15,8 @@ import { cn } from '@/lib/utils';
 
 const SCOPES: Record<ArtifactListScope, { tab: string; heading: string }> = {
   mine: { tab: 'Mine', heading: 'My artifacts' },
-  public: { tab: 'All public', heading: 'Public artifacts' },
+  shared: { tab: 'Shared with me', heading: 'Shared with me' },
+  public: { tab: 'Company', heading: 'Shared with the company' },
 };
 
 /** `?scope=` (default `mine`) and `?page=` (default 1); anything invalid falls back. */
@@ -36,7 +37,7 @@ function galleryHref(scope: ArtifactListScope, page = 1): string {
   return search ? `/?${search}` : '/';
 }
 
-/** Home: my artifacts, or every public one. Shared with me joins them in step 14. */
+/** Home: my artifacts, those shared with me, or those shared with the whole company. */
 export function GalleryPage() {
   const { scope, page } = useGalleryParams();
   const pageSize = ARTIFACT_LIST_DEFAULT_PAGE_SIZE;
@@ -111,14 +112,24 @@ export function GalleryPage() {
   );
 }
 
+const EMPTY_SHARED: Record<Exclude<ArtifactListScope, 'mine'>, { title: string; text: string }> = {
+  shared: {
+    title: 'Nothing shared with you yet',
+    text: 'Artifacts colleagues share with you by name show up here.',
+  },
+  public: {
+    title: 'Nothing shared with the company yet',
+    text: 'Artifacts shared with everyone at the company show up here, for all to view and comment on.',
+  },
+};
+
 function EmptyGallery({ scope }: { scope: ArtifactListScope }) {
-  if (scope === 'public') {
+  if (scope !== 'mine') {
+    const { title, text } = EMPTY_SHARED[scope];
     return (
       <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-16 text-center">
-        <h2 className="text-lg font-medium">No public artifacts yet</h2>
-        <p className="max-w-sm text-sm text-muted-foreground">
-          Artifacts anyone makes public show up here, for everyone to view and comment on.
-        </p>
+        <h2 className="text-lg font-medium">{title}</h2>
+        <p className="max-w-sm text-sm text-muted-foreground">{text}</p>
       </div>
     );
   }

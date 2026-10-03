@@ -1,6 +1,7 @@
 import { type ComponentProps, type ReactNode, useId } from 'react';
 import { Input } from '@/components/ui/input.tsx';
 import { Label } from '@/components/ui/label.tsx';
+import { NativeSelect } from '@/components/ui/native-select.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
 
 interface FieldProps {
@@ -80,6 +81,22 @@ export function TextAreaField({
   return (
     <Field label={label} hint={hint} error={error} ids={ids}>
       <Textarea {...ids.controlProps} {...textareaProps} />
+    </Field>
+  );
+}
+
+/** `TextField` for a choice from a short list; pass `<option>`s as children. */
+export function SelectField({
+  label,
+  hint,
+  error,
+  id,
+  ...selectProps
+}: FieldProps & ComponentProps<typeof NativeSelect>) {
+  const ids = useFieldIds(id, { label, hint, error });
+  return (
+    <Field label={label} hint={hint} error={error} ids={ids}>
+      <NativeSelect {...ids.controlProps} {...selectProps} />
     </Field>
   );
 }
