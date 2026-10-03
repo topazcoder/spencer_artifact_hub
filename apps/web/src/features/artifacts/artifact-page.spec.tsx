@@ -46,6 +46,11 @@ function artifact(mimeType: ArtifactMimeType, overrides: Partial<Artifact> = {})
   };
 }
 
+/** Opens the Details tab; the page opens on Feedback. */
+async function openDetails(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('tab', { name: 'Details' }));
+}
+
 describe('artifact page', () => {
   let api: ReturnType<typeof installFakeApi>;
 
@@ -69,6 +74,7 @@ describe('artifact page', () => {
     show(item);
 
     expect(await screen.findByRole('heading', { name: 'Pricing page' })).toBeTruthy();
+    await openDetails(userEvent.setup());
     expect(screen.getByText('Grace Hopper')).toBeTruthy();
     expect(screen.getByText('v2')).toBeTruthy();
     expect(screen.getByText('HTML, 1.5 KB')).toBeTruthy();
@@ -253,6 +259,7 @@ describe('artifact page: versions and editing', () => {
 
   it('edits the details without creating a version', async () => {
     const { item, user } = showVersioned();
+    await openDetails(user);
     await user.click(await screen.findByRole('button', { name: 'Edit details' }));
     const title = screen.getByLabelText('Title');
     await user.clear(title);
@@ -271,6 +278,7 @@ describe('artifact page: versions and editing', () => {
 
   it('shows validation errors from the server on their fields', async () => {
     const { user } = showVersioned();
+    await openDetails(user);
     await user.click(await screen.findByRole('button', { name: 'Edit details' }));
     api.failNextUpdate(400, ErrorCode.VALIDATION_FAILED, 'Invalid request.', [
       { path: 'title', message: 'That title is taken.' },
@@ -281,6 +289,7 @@ describe('artifact page: versions and editing', () => {
 
   it('deletes after confirming and goes home without refetching the artifact', async () => {
     const { item, user, app } = showVersioned();
+    await openDetails(user);
     await user.click(await screen.findByRole('button', { name: 'Delete' }));
     const confirm = await screen.findByRole('alertdialog', { name: 'Delete “Pricing page”?' });
     await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
@@ -291,8 +300,9 @@ describe('artifact page: versions and editing', () => {
   });
 
   it("hides the owner's actions from everyone else", async () => {
-    showVersioned('', { id: crypto.randomUUID(), displayName: 'Grace Hopper' });
+    const { user } = showVersioned('', { id: crypto.randomUUID(), displayName: 'Grace Hopper' });
     expect(await screen.findByRole('heading', { name: 'Pricing page' })).toBeTruthy();
+    await openDetails(user);
     for (const name of ['Upload new version', 'Edit details', 'Delete']) {
       expect(screen.queryByRole('button', { name })).toBeNull();
     }

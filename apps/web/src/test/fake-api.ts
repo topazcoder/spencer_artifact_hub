@@ -5,6 +5,7 @@ import {
   type ArtifactVersion,
   ErrorCode,
   type ArtifactAccess,
+  type Comment,
   type SharedPerson,
   type User,
 } from '@artifact-hub/shared';
@@ -40,6 +41,8 @@ const USER_SEARCH_ROUTE = /^GET \/api\/users\/search\?(.*)$/;
 const LINK_ROUTE = /^(PUT|DELETE) \/api\/artifacts\/([^/?]+)\/access\/link$/;
 const LINK_RESET_ROUTE = /^POST \/api\/artifacts\/([^/?]+)\/access\/link\/reset$/;
 const SHARED_ROUTE = /^GET \/api\/s\/([^/?]+)(\/content)?(\?.*)?$/;
+const COMMENTS_ROUTE = /^(GET|POST) \/api\/artifacts\/([^/?]+)\/comments(?:\?(.*))?$/;
+const COMMENT_ROUTE = /^(PATCH|DELETE) \/api\/comments\/([^/?]+)$/;
 
 const MIME_BY_EXTENSION: Record<string, ArtifactMimeType> = {
   html: 'text/html',
@@ -72,6 +75,13 @@ function matches(artifact: Artifact, q: string): boolean {
   );
 }
 
+/** A comment as the fake server stores it: without the permissions, which depend on who asks. */
+interface StoredComment {
+  artifactId: string;
+  comment: Omit<Comment, 'permissions'>;
+  deleted: boolean;
+}
+
 /**
  * Stubs `fetch` with an in-memory version of the API (auth, config, publishing and reading
  * artifacts), so component tests run the real API client, hooks and routes.
@@ -90,6 +100,9 @@ export function installFakeApi() {
   /** Every link token handed out, live or not. */
   const linkTokens: { token: string; artifactId: string; revoked: boolean }[] = [];
   let nextPublishResponse: Response | null = null;
+  /** Every comment, oldest first, deleted ones included. */
+  const comments: StoredComment[] = [];
+  let nextCommentResponse: Response | null = null;
   /** While set, list requests wait for it, to show what happens while results load. */
   let listsHeld: Promise<void> | null = null;
   let nextUpdateResponse: Response | null = null;
@@ -317,6 +330,83 @@ export function installFakeApi() {
     return json(200, { items });
   };
 
+  /** `comment` with what the signed-in user may do with it: authors decide, as on the server. */
+  const commentSeen = ({ comment }: StoredComment): Comment => {
+    const mine = comment.author.id === signedIn?.id;
+    return {
+      ...comment,
+      permissions: { edit: mine, delete: mine, resolve: mine && comment.parentId === null },
+    };
+  };
+
+  /** Threads oldest first, without deleted comments or the replies of deleted ones. */
+  const listComments = (artifactId: string, query: URLSearchParams): Response => {
+    const version = query.get('version');
+    const live = comments.filter(
+      (c) =>
+        c.artifactId === artifactId &&
+        !c.deleted &&
+        (version === null || c.comment.versionNo === Number(version)),
+    );
+    const items = live
+      .filter((c) => c.comment.parentId === null)
+      .map((thread) => ({
+        ...commentSeen(thread),
+        replies: live.filter((c) => c.comment.parentId === thread.comment.id).map(commentSeen),
+      }));
+    return json(200, { items });
+  };
+
+  const postComment = (artifactId: string, body: Record<string, unknown>): Response => {
+    const stored = artifacts.get(artifactId);
+    if (!stored) return error(404, ErrorCode.NOT_FOUND, 'Artifact not found.');
+    const parent = comments.find((c) => c.comment.id === body.parentId)?.comment;
+    const comment: StoredComment = {
+      artifactId,
+      comment: {
+        id: crypto.randomUUID(),
+        versionNo:
+          parent?.versionNo ??
+          (body.versionNo as number | undefined) ??
+          stored.artifact.currentVersion!.versionNo,
+        parentId: parent?.id ?? null,
+        author: { id: signedIn!.id, displayName: signedIn!.displayName },
+        body: String(body.body).trim(),
+        resolvedAt: null,
+        editedAt: null,
+        createdAt: new Date().toISOString(),
+      },
+      deleted: false,
+    };
+    comments.push(comment);
+    return json(201, { comment: commentSeen(comment) });
+  };
+
+  const changeComment = (
+    method: string,
+    commentId: string,
+    body: Record<string, unknown>,
+  ): Response => {
+    const stored = comments.find((c) => c.comment.id === commentId && !c.deleted);
+    if (!stored) return error(404, ErrorCode.NOT_FOUND, 'Comment not found.');
+    const { comment } = stored;
+    if (comment.author.id !== signedIn?.id) {
+      return error(403, ErrorCode.FORBIDDEN, 'Only its author can change this comment.');
+    }
+    if (method === 'DELETE') {
+      stored.deleted = true;
+      return json(204);
+    }
+    if (typeof body.body === 'string' && body.body.trim() !== comment.body) {
+      comment.body = body.body.trim();
+      comment.editedAt = new Date().toISOString();
+    }
+    if (typeof body.resolved === 'boolean') {
+      comment.resolvedAt = body.resolved ? new Date().toISOString() : null;
+    }
+    return json(200, { comment: commentSeen(stored) });
+  };
+
   const fetchMock = vi.fn(async (input: string, init: RequestInit = {}) => {
     const body = typeof init.body === 'string' ? JSON.parse(init.body) : undefined;
     const route = `${init.method ?? 'GET'} ${input}`;
@@ -360,6 +450,26 @@ export function installFakeApi() {
       }
       if (route.startsWith('POST')) return sharePeople(artifactId, body);
       return json(200, { access: accessOf(artifactId) });
+    }
+    const commentsMatch = COMMENTS_ROUTE.exec(route);
+    if (commentsMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      const [, method, id = '', query = ''] = commentsMatch;
+      if (method === 'POST' && nextCommentResponse) {
+        const response = nextCommentResponse;
+        nextCommentResponse = null;
+        return response;
+      }
+      const artifactId = decodeURIComponent(id);
+      return method === 'POST'
+        ? postComment(artifactId, body)
+        : listComments(artifactId, new URLSearchParams(query));
+    }
+    const commentMatch = COMMENT_ROUTE.exec(route);
+    if (commentMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      const [, method = '', id = ''] = commentMatch;
+      return changeComment(method, decodeURIComponent(id), body ?? {});
     }
     const sharedMatch = SHARED_ROUTE.exec(route);
     if (sharedMatch) {
@@ -572,6 +682,50 @@ export function installFakeApi() {
             sharedAt: new Date().toISOString(),
           },
         ],
+      });
+    },
+    /**
+     * Adds a comment by `author` on the artifact's current version (or `versionNo`), as a reply
+     * to `parentId` if given. Returns its id.
+     */
+    addComment(
+      artifactId: string,
+      author: User,
+      body: string,
+      {
+        versionNo,
+        parentId = null,
+        resolved = false,
+      }: { versionNo?: number; parentId?: string | null; resolved?: boolean } = {},
+    ): string {
+      const parent = comments.find((c) => c.comment.id === parentId)?.comment;
+      const comment = {
+        id: crypto.randomUUID(),
+        versionNo:
+          parent?.versionNo ?? versionNo ?? artifacts.get(artifactId)!.artifact.latestVersionNo,
+        parentId,
+        author: { id: author.id, displayName: author.displayName },
+        body,
+        resolvedAt: resolved ? new Date().toISOString() : null,
+        editedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      comments.push({ artifactId, comment, deleted: false });
+      return comment.id;
+    },
+    /** Every comment the fake server has that isn't deleted, oldest first. */
+    comments(): Omit<Comment, 'permissions'>[] {
+      return comments.filter((c) => !c.deleted).map((c) => c.comment);
+    },
+    /** Deletes a comment behind the app's back, as if from another tab. */
+    deleteComment(commentId: string) {
+      const stored = comments.find((c) => c.comment.id === commentId);
+      if (stored) stored.deleted = true;
+    },
+    /** The next new comment fails with this error instead of being added. */
+    failNextComment(status: number, code: ErrorCode, message: string, details?: unknown) {
+      nextCommentResponse = json(status, {
+        error: { code, message, details, requestId: 'test-req' },
       });
     },
     /** The artifact as the fake server currently has it, if it still exists. */

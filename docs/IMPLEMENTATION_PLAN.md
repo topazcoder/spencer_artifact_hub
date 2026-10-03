@@ -549,7 +549,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 
 **Comments**
 16. ✅ Comments API: replies, resolve, edit and delete. (Comment rules live in `AccessPolicy.commentPermissions`; view-only people read comments; deleted comments disappear with their replies; the open-comment count on gallery cards moves to step 28.)
-17. Feedback panel with the version filter.
+17. ✅ Feedback panel with the version filter. (Feedback is the first, default tab; the comment box comes first, then *Show feedback for:* this version / all versions; open and resolved threads together, oldest first, with replies folded until opened; comments are plain text with `http(s)` links opening in a new tab.)
 
 **MCP**
 18. API tokens, the Settings page and the Bearer guard.

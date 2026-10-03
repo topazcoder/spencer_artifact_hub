@@ -20,6 +20,7 @@ import { NewVersionDialog } from '@/features/artifacts/new-version-dialog.tsx';
 import { useArtifact, useArtifactVersions } from '@/features/artifacts/use-artifacts.ts';
 import { VersionList } from '@/features/artifacts/version-list.tsx';
 import { ArtifactViewer } from '@/features/artifacts/viewers/artifact-viewer.tsx';
+import { FeedbackPanel } from '@/features/comments/feedback-panel.tsx';
 import { ShareDialog } from '@/features/sharing/share-dialog.tsx';
 import { isApiError } from '@/lib/api/api-error.ts';
 import { formatRelativeTime } from '@/lib/format.ts';
@@ -164,7 +165,7 @@ function ArtifactView({ artifact }: { artifact: Artifact }) {
         </p>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div
           ref={viewerRef}
           className="h-[75vh] overflow-hidden rounded-xl border bg-background [&:fullscreen]:h-screen [&:fullscreen]:rounded-none [&:fullscreen]:border-0"
@@ -185,11 +186,19 @@ function ArtifactView({ artifact }: { artifact: Artifact }) {
         </div>
 
         <aside>
-          <Tabs defaultValue="details">
+          <Tabs defaultValue="feedback">
             <TabsList className="w-full">
-              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="feedback">Feedback</TabsTrigger>
               <TabsTrigger value="versions">Versions</TabsTrigger>
+              <TabsTrigger value="details">Details</TabsTrigger>
             </TabsList>
+            <TabsContent value="feedback" className="pt-2">
+              {version === undefined ? (
+                <InlineLoading />
+              ) : (
+                <FeedbackPanel artifact={artifact} versionNo={version?.versionNo ?? null} />
+              )}
+            </TabsContent>
             <TabsContent value="details" className="pt-2">
               <ArtifactDetails artifact={artifact} />
             </TabsContent>
