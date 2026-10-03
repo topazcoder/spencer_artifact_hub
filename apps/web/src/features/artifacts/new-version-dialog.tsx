@@ -1,10 +1,14 @@
-import type { Artifact } from '@artifact-hub/shared';
+import {
+  type Artifact,
+  type CreateVersionMetadata,
+  type CreateVersionRequest,
+  createVersionRequestSchema,
+} from '@artifact-hub/shared';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { type ReactNode, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { FormError, TextAreaField, TextField } from '@/components/form-fields.tsx';
+import { FormError, TextAreaField } from '@/components/form-fields.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import {
   Dialog,
@@ -19,18 +23,25 @@ import {
 import { useAppConfig } from '@/features/config/use-app-config.ts';
 import { isApiError } from '@/lib/api/api-error.ts';
 import { applyServerError } from '@/lib/forms/apply-server-error.ts';
-import { titleFromFilename } from './artifact-types.ts';
-import type { MetadataFormOutput, MetadataFormValues } from './artifacts.types.ts';
 import { fileProblem } from './file-checks.ts';
 import { FileDropZone } from './file-drop-zone.tsx';
-import { metadataFormSchema } from './metadata-form-schema.ts';
-import { usePublishArtifact } from './use-artifacts.ts';
+import { usePublishVersion } from './use-artifacts.ts';
 
-/** Opens the publish dialog from `children` (the trigger button). */
-export function PublishDialog({ children }: { children: ReactNode }) {
+/**
+ * Uploads new content for `artifact` as its next version, from `children` (the trigger).
+ * `onPublished` runs with the updated artifact once the dialog has closed.
+ */
+export function NewVersionDialog({
+  artifact,
+  onPublished,
+  children,
+}: {
+  artifact: Artifact;
+  onPublished: (artifact: Artifact) => void;
+  children: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
-  const publish = usePublishArtifact();
-  const navigate = useNavigate();
+  const publish = usePublishVersion(artifact.id);
 
   const onOpenChange = (next: boolean) => {
     // Keep the dialog open while the upload is in flight.
@@ -39,36 +50,35 @@ export function PublishDialog({ children }: { children: ReactNode }) {
     setOpen(next);
   };
 
-  const onPublished = (artifact: Artifact) => {
-    setOpen(false);
-    toast.success(`Published “${artifact.title}”`);
-    void navigate(`/artifacts/${artifact.id}`);
-  };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Publish an artifact</DialogTitle>
+          <DialogTitle>Upload a new version</DialogTitle>
           <DialogDescription>
-            Only you can see it until you share it or make it public.
+            It becomes v{artifact.latestVersionNo + 1} of “{artifact.title}”. Earlier versions stay
+            available.
           </DialogDescription>
         </DialogHeader>
-        <PublishForm
-          onSubmit={(file, metadata) => publish.mutateAsync({ file, metadata })}
-          onPublished={onPublished}
+        <NewVersionForm
+          onSubmit={(file, changeNote) => publish.mutateAsync({ file, metadata: { changeNote } })}
+          onPublished={(updated) => {
+            setOpen(false);
+            toast.success(`Published v${updated.latestVersionNo}`);
+            onPublished(updated);
+          }}
         />
       </DialogContent>
     </Dialog>
   );
 }
 
-function PublishForm({
+function NewVersionForm({
   onSubmit,
   onPublished,
 }: {
-  onSubmit: (file: File, metadata: MetadataFormOutput) => Promise<Artifact>;
+  onSubmit: (file: File, changeNote: string) => Promise<Artifact>;
   onPublished: (artifact: Artifact) => void;
 }) {
   const { data: config } = useAppConfig();
@@ -78,38 +88,28 @@ function PublishForm({
     register,
     handleSubmit,
     setError,
-    setValue,
-    getFieldState,
     formState: { errors, isSubmitting },
-  } = useForm<MetadataFormValues, unknown, MetadataFormOutput>({
-    resolver: zodResolver(metadataFormSchema),
-    defaultValues: { title: '', description: '', tags: '' },
+  } = useForm<CreateVersionRequest, unknown, CreateVersionMetadata>({
+    resolver: zodResolver(createVersionRequestSchema),
+    defaultValues: { changeNote: '' },
   });
 
   const chooseFile = (chosen: File) => {
     const problem = fileProblem(chosen, config?.maxArtifactBytes);
-    if (problem) {
-      setFileError(problem);
-      return;
-    }
-    setFile(chosen);
-    setFileError(undefined);
-    // Default the title to the file name, unless the user already typed one.
-    if (!getFieldState('title').isDirty) {
-      setValue('title', titleFromFilename(chosen.name), { shouldValidate: !!errors.title });
-    }
+    setFileError(problem);
+    if (!problem) setFile(chosen);
   };
 
-  const submit = handleSubmit(async (metadata) => {
+  const submit = handleSubmit(async ({ changeNote }) => {
     if (!file) return;
     try {
-      onPublished(await onSubmit(file, metadata));
+      onPublished(await onSubmit(file, changeNote));
     } catch (error) {
       if (isApiError(error, 'UNSUPPORTED_TYPE') || isApiError(error, 'ARTIFACT_TOO_LARGE')) {
         setFileError(error.message);
         return;
       }
-      applyServerError(error, setError, ['title', 'description', 'tags']);
+      applyServerError(error, setError, ['changeNote']);
     }
   });
 
@@ -119,7 +119,7 @@ function PublishForm({
       className="grid gap-4"
       onSubmit={(event) => {
         // Report a missing file together with any field errors.
-        if (!file) setFileError('Choose a file to publish.');
+        if (!file) setFileError('Choose a file to upload.');
         void submit(event);
       }}
     >
@@ -131,18 +131,12 @@ function PublishForm({
         error={fileError}
         disabled={isSubmitting}
       />
-      <TextField label="Title" error={errors.title?.message} {...register('title')} />
       <TextAreaField
-        label="Description"
+        label="What changed?"
+        hint="Optional"
         rows={3}
-        error={errors.description?.message}
-        {...register('description')}
-      />
-      <TextField
-        label="Tags"
-        hint="Separate tags with commas, e.g. marketing, q3"
-        error={errors.tags?.message}
-        {...register('tags')}
+        error={errors.changeNote?.message}
+        {...register('changeNote')}
       />
       <DialogFooter>
         <DialogClose asChild>
@@ -151,7 +145,7 @@ function PublishForm({
           </Button>
         </DialogClose>
         <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Publishing…' : 'Publish'}
+          {isSubmitting ? 'Uploading…' : 'Upload version'}
         </Button>
       </DialogFooter>
     </form>

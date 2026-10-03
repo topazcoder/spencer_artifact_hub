@@ -2,10 +2,10 @@ import { artifactTagsSchema, createArtifactRequestSchema } from '@artifact-hub/s
 import { z } from 'zod';
 
 /**
- * The publish form, validated with the same rules as the API. Tags are typed as one
- * comma-separated string; any tag problem is reported on that field.
+ * The artifact details form (publish and edit), validated with the same rules as the API. Tags
+ * are typed as one comma-separated string; any tag problem is reported on that field.
  */
-export const publishFormSchema = z.object({
+export const metadataFormSchema = z.object({
   title: createArtifactRequestSchema.shape.title,
   description: createArtifactRequestSchema.shape.description,
   tags: z.string().transform((value, ctx) => {

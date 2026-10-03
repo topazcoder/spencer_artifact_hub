@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
-import type { Artifact, ArtifactMimeType } from '@artifact-hub/shared';
-import { cleanup, screen, within } from '@testing-library/react';
+import {
+  type Artifact,
+  type ArtifactMimeType,
+  type ArtifactVersion,
+  ErrorCode,
+  type User,
+} from '@artifact-hub/shared';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeApi } from '@/test/fake-api.ts';
 import { renderApp } from '@/test/render-app.tsx';
@@ -128,5 +135,162 @@ describe('artifact page', () => {
     renderApp(`/artifacts/${id}`);
     expect(await screen.findByRole('heading', { name: 'Artifact not found' })).toBeTruthy();
     expect(api.calls(`GET /api/artifacts/${id}`)).toBe(1);
+  });
+});
+
+function version(versionNo: number, overrides: Partial<ArtifactVersion> = {}): ArtifactVersion {
+  return {
+    id: crypto.randomUUID(),
+    versionNo,
+    mimeType: 'text/html',
+    sizeBytes: 1024 * versionNo,
+    sha256: String(versionNo).repeat(64),
+    originalFilename: 'pricing.html',
+    changeNote: null,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+describe('artifact page: versions and editing', () => {
+  let api: ReturnType<typeof installFakeApi>;
+  let me: User;
+
+  beforeEach(() => {
+    api = installFakeApi();
+    me = api.addAccount('ada@example.com', 'correct horse', 'Ada Lovelace');
+    api.signIn(me);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  /** An HTML artifact with versions 1–3, owned by me unless `owner` says otherwise. */
+  function showVersioned(path = '', owner?: Artifact['owner']) {
+    const versions = [version(1), version(2, { changeNote: 'Tighter copy' }), version(3)];
+    const item = artifact('text/html', {
+      owner: owner ?? { id: me.id, displayName: me.displayName },
+      currentVersion: versions[2]!,
+      latestVersionNo: 3,
+    });
+    api.addArtifact(item, '<p>hi</p>', versions);
+    return { item, user: userEvent.setup(), app: renderApp(`/artifacts/${item.id}${path}`) };
+  }
+
+  it('lists the versions, newest first, and shows an earlier one on request', async () => {
+    const { item, user, app } = showVersioned();
+    await user.click(await screen.findByRole('tab', { name: 'Versions' }));
+
+    const list = await screen.findByRole('list', { name: 'Versions' });
+    const links = within(list).getAllByRole('link');
+    expect(links.map((link) => link.textContent)).toEqual([
+      expect.stringMatching(/^v3Latest/),
+      expect.stringMatching(/^v2.*Tighter copy/),
+      expect.stringMatching(/^v1/),
+    ]);
+    expect(links[0]!.getAttribute('aria-current')).toBe('page');
+
+    await user.click(links[2]!);
+    expect(app.location()).toBe(`/artifacts/${item.id}?v=1`);
+    expect(await screen.findByRole('status')).toHaveProperty(
+      'textContent',
+      "You're viewing v1, an earlier version. Show the latest (v3)",
+    );
+    expect(screen.getByTitle('Pricing page').getAttribute('src')).toBe(
+      `/api/artifacts/${item.id}/versions/1/content`,
+    );
+    expect(screen.getByRole('link', { name: 'Download' }).getAttribute('href')).toBe(
+      `/api/artifacts/${item.id}/versions/1/content?download=1`,
+    );
+
+    await user.click(screen.getByRole('link', { name: 'Show the latest (v3)' }));
+    expect(app.location()).toBe(`/artifacts/${item.id}`);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it.each(['?v=9', '?v=latest'])('says so when %s is not a version', async (query) => {
+    showVersioned(query);
+    expect(await screen.findByText("This version doesn't exist.")).toBeTruthy();
+  });
+
+  it('uploads a new version with a change note and shows it', async () => {
+    const { user } = showVersioned('?v=1');
+    await user.click(await screen.findByRole('button', { name: 'Upload new version' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Upload a new version' });
+    expect(within(dialog).getByText(/It becomes v4 of “Pricing page”/)).toBeTruthy();
+
+    await user.upload(
+      within(dialog).getByLabelText('File'),
+      new File(['<p>v4</p>'], 'v4.html', { type: 'text/html' }),
+    );
+    await user.type(within(dialog).getByLabelText('What changed?'), 'New hero');
+    await user.click(within(dialog).getByRole('button', { name: 'Upload version' }));
+
+    expect(await screen.findByText('v4')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+    const [form] = api.publishedForms;
+    expect([...form!.keys()]).toEqual(['metadata', 'file']);
+    expect(JSON.parse(String(form!.get('metadata')))).toEqual({ changeNote: 'New hero' });
+  });
+
+  it('shows a rejected file next to the file picker', async () => {
+    const { user } = showVersioned();
+    await user.click(await screen.findByRole('button', { name: 'Upload new version' }));
+    const dialog = await screen.findByRole('dialog');
+    api.failNextPublish(415, ErrorCode.UNSUPPORTED_TYPE, 'This type of file is not supported.');
+    await user.upload(within(dialog).getByLabelText('File'), new File(['x'], 'fake.png'));
+    await user.click(within(dialog).getByRole('button', { name: 'Upload version' }));
+
+    expect(await within(dialog).findByText('This type of file is not supported.')).toBeTruthy();
+  });
+
+  it('edits the details without creating a version', async () => {
+    const { item, user } = showVersioned();
+    await user.click(await screen.findByRole('button', { name: 'Edit details' }));
+    const title = screen.getByLabelText('Title');
+    await user.clear(title);
+    await user.type(title, 'Pricing v2');
+    const tags = screen.getByLabelText('Tags');
+    await user.clear(tags);
+    await user.type(tags, 'Launch, launch');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('heading', { name: 'Pricing v2', level: 1 })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    const savedTags = within(screen.getByRole('list', { name: 'Tags' })).getAllByRole('listitem');
+    expect(savedTags.map((tag) => tag.textContent)).toEqual(['launch']);
+    expect(api.artifact(item.id)).toMatchObject({ title: 'Pricing v2', latestVersionNo: 3 });
+  });
+
+  it('shows validation errors from the server on their fields', async () => {
+    const { user } = showVersioned();
+    await user.click(await screen.findByRole('button', { name: 'Edit details' }));
+    api.failNextUpdate(400, ErrorCode.VALIDATION_FAILED, 'Invalid request.', [
+      { path: 'title', message: 'That title is taken.' },
+    ]);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('That title is taken.')).toBeTruthy();
+  });
+
+  it('deletes after confirming and goes home without refetching the artifact', async () => {
+    const { item, user, app } = showVersioned();
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete “Pricing page”?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(app.location()).toBe('/'));
+    expect(api.artifact(item.id)).toBeUndefined();
+    expect(api.calls(`GET /api/artifacts/${item.id}`)).toBe(1);
+  });
+
+  it("hides the owner's actions from everyone else", async () => {
+    showVersioned('', { id: crypto.randomUUID(), displayName: 'Grace Hopper' });
+    expect(await screen.findByRole('heading', { name: 'Pricing page' })).toBeTruthy();
+    for (const name of ['Upload new version', 'Edit details', 'Delete']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
   });
 });

@@ -343,7 +343,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | MCP add_comment | Dedupe identical `(author, version, parent, body)` within 2 min |
 | MCP share_artifact | Identical active share (same audience, recipients, permission, expiry) → return existing |
 | Upload session | Single-use token consumed atomically |
-| Version numbering | Row lock + `UNIQUE(artifact_id, version_no)`; retry once on unique violation |
+| Version numbering | The blob key takes `latest_version_no + 1`; the transaction locks the artifact row and answers `409 CONFLICT` (blob deleted, client retries) if another version was committed meanwhile. `UNIQUE(artifact_id, version_no)` backs it up |
 
 ### Consistency
 - Order of operations: blob first, then DB transaction. On DB failure the blob is deleted on a best-effort basis.
@@ -409,7 +409,7 @@ POST   /api/artifacts                             (multipart: `metadata` JSON fi
 GET    /api/artifacts/:id
 PATCH  /api/artifacts/:id                         (metadata / visibility)
 DELETE /api/artifacts/:id                         (soft delete)
-POST   /api/artifacts/:id/versions                (multipart: file + change_note)        [Idempotency-Key]
+POST   /api/artifacts/:id/versions                (multipart: `metadata` JSON {changeNote}, then `file`) [Idempotency-Key]
 GET    /api/artifacts/:id/versions
 GET    /api/artifacts/:id/versions/:no/content    (sandboxed stream; ?download=1)
 
@@ -523,7 +523,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 8. ✅ Create an artifact with v1, get one, list mine. `AccessPolicy` starts as owner-only.
 9. ✅ Content endpoint with sandbox headers, and a viewer for each type.
 10. ✅ Publish dialog and the gallery's *Mine* tab, without AI. (`GET /api/config` added early for the size limit; the visibility control waits for step 12, so everything is published private until then.)
-11. New versions, metadata edits, soft delete, and the Versions and Details tabs.
+11. ✅ New versions, metadata edits, soft delete, and the Versions and Details tabs.
 
 **Access and sharing**
 12. Public visibility and the *All public* tab, plus the full `AccessPolicy` test matrix.

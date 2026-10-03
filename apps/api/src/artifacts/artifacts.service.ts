@@ -1,9 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { type CreateArtifactMetadata, ErrorCode } from '@artifact-hub/shared';
+import {
+  type CreateArtifactMetadata,
+  type CreateVersionMetadata,
+  ErrorCode,
+  type UpdateArtifactMetadata,
+} from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { DataSource, type Repository } from 'typeorm';
+import { DataSource, type EntityManager, IsNull, type Repository } from 'typeorm';
 import { z } from 'zod';
 import {
   ARTIFACT_NOT_FOUND_MESSAGE,
@@ -23,6 +28,7 @@ import type {
   ArtifactListOptions,
   ArtifactPage,
   NewContent,
+  StoredContent,
 } from './artifacts.types.js';
 
 const idSchema = z.guid();
@@ -54,17 +60,7 @@ export class ArtifactsService {
     const log = { userId: actor.userId, artifactId, via: actor.via };
     this.logger.info(log, 'Publish received');
 
-    const { mimeType, body } = await this.inspector.inspect(content.stream, content);
-    this.logger.info({ ...log, mimeType }, 'Content type detected');
-
-    const storageKey = blobKeys.artifactVersion(artifactId, 1);
-    const started = performance.now();
-    const blob = await this.storage.put(storageKey, body, { contentType: mimeType });
-    this.logger.info(
-      { ...log, bytes: blob.size, ms: Math.round(performance.now() - started) },
-      'Blob stored',
-    );
-
+    const stored = await this.storeContent(artifactId, 1, content, log);
     try {
       await this.dataSource.transaction(async (manager) => {
         // Inserted as a draft first: a published artifact must point at a version.
@@ -79,30 +75,101 @@ export class ArtifactsService {
           metadataSource: 'user',
           latestVersionNo: 0,
         });
-        const inserted = await manager.insert(ArtifactVersion, {
-          artifactId,
-          versionNo: 1,
-          storageKey,
-          mimeType,
-          sizeBytes: blob.size,
-          sha256: blob.sha256,
-          originalFilename: sanitizeFilename(content.filename),
-          changeNote: null,
-          createdBy: actor.userId,
-        });
-        await manager.update(Artifact, artifactId, {
-          currentVersionId: inserted.identifiers[0]?.id as string,
-          latestVersionNo: 1,
-          status: 'published',
-        });
+        await this.insertVersion(manager, actor, artifactId, 1, stored, null);
       });
     } catch (error) {
-      await this.deleteBlobQuietly(storageKey, log);
+      await this.deleteBlobQuietly(stored.storageKey, log);
       throw error;
     }
     this.logger.info({ ...log, versionNo: 1 }, 'Version committed');
 
     return this.get(actor, artifactId);
+  }
+
+  /**
+   * Adds `content` as the next version and makes it current. Only the owner may. The artifact
+   * row is locked while the version is numbered; if another version was committed since the
+   * number was picked for the blob key, this fails with `CONFLICT` and the client can retry.
+   */
+  async addVersion(
+    actor: Actor,
+    id: string,
+    metadata: CreateVersionMetadata,
+    content: NewContent,
+  ): Promise<Artifact> {
+    const artifact = await this.get(actor, id);
+    this.access.assertCan(actor, 'edit', artifact);
+    const versionNo = artifact.latestVersionNo + 1;
+    const log = { userId: actor.userId, artifactId: artifact.id, via: actor.via };
+    this.logger.info({ ...log, versionNo }, 'New version received');
+
+    const stored = await this.storeContent(artifact.id, versionNo, content, log);
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        const locked = await manager.findOne(Artifact, {
+          where: { id: artifact.id, deletedAt: IsNull() },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!locked) throw new AppError(ErrorCode.NOT_FOUND, ARTIFACT_NOT_FOUND_MESSAGE);
+        if (locked.latestVersionNo !== versionNo - 1) {
+          throw new AppError(
+            ErrorCode.CONFLICT,
+            'Another version was published at the same time. Try again.',
+          );
+        }
+        await this.insertVersion(
+          manager,
+          actor,
+          artifact.id,
+          versionNo,
+          stored,
+          metadata.changeNote || null,
+        );
+      });
+    } catch (error) {
+      await this.deleteBlobQuietly(stored.storageKey, log);
+      throw error;
+    }
+    this.logger.info({ ...log, versionNo }, 'Version committed');
+
+    return this.get(actor, artifact.id);
+  }
+
+  /** Every version of the artifact, newest first. */
+  async listVersions(actor: Actor, id: string): Promise<ArtifactVersion[]> {
+    const artifact = await this.get(actor, id);
+    return this.versions.find({
+      where: { artifactId: artifact.id },
+      order: { versionNo: 'DESC' },
+    });
+  }
+
+  /** Changes title, description, tags or visibility. Never creates a version. Owner only. */
+  async update(actor: Actor, id: string, changes: UpdateArtifactMetadata): Promise<Artifact> {
+    const artifact = await this.get(actor, id);
+    this.access.assertCan(actor, 'edit', artifact);
+
+    await this.artifacts.update({ id: artifact.id, deletedAt: IsNull() }, changes);
+    this.logger.info(
+      { userId: actor.userId, artifactId: artifact.id, fields: Object.keys(changes) },
+      'Artifact updated',
+    );
+
+    return this.get(actor, artifact.id);
+  }
+
+  /**
+   * Soft delete: the artifact disappears for everyone, owner included, at once. Its rows and
+   * blobs are kept. Owner only.
+   */
+  async remove(actor: Actor, id: string): Promise<void> {
+    const artifact = await this.get(actor, id);
+    this.access.assertCan(actor, 'delete', artifact);
+    await this.artifacts.update(
+      { id: artifact.id, deletedAt: IsNull() },
+      { deletedAt: new Date() },
+    );
+    this.logger.info({ userId: actor.userId, artifactId: artifact.id }, 'Artifact deleted');
   }
 
   /** The artifact with its owner and current version. `NOT_FOUND` if missing or not visible. */
@@ -155,6 +222,59 @@ export class ArtifactsService {
 
     const [items, total] = await qb.getManyAndCount();
     return { items, total };
+  }
+
+  /** Detects the content's type and stores it under a fresh key for `versionNo`. */
+  private async storeContent(
+    artifactId: string,
+    versionNo: number,
+    content: NewContent,
+    log: Record<string, string>,
+  ): Promise<StoredContent> {
+    const { mimeType, body } = await this.inspector.inspect(content.stream, content);
+    this.logger.info({ ...log, mimeType }, 'Content type detected');
+
+    const storageKey = blobKeys.artifactVersion(artifactId, versionNo);
+    const started = performance.now();
+    const { size, sha256 } = await this.storage.put(storageKey, body, { contentType: mimeType });
+    this.logger.info(
+      { ...log, bytes: size, ms: Math.round(performance.now() - started) },
+      'Blob stored',
+    );
+    return {
+      storageKey,
+      mimeType,
+      size,
+      sha256,
+      originalFilename: sanitizeFilename(content.filename),
+    };
+  }
+
+  /** Inserts version `versionNo` and makes it the artifact's current, published version. */
+  private async insertVersion(
+    manager: EntityManager,
+    actor: Actor,
+    artifactId: string,
+    versionNo: number,
+    stored: StoredContent,
+    changeNote: string | null,
+  ): Promise<void> {
+    const inserted = await manager.insert(ArtifactVersion, {
+      artifactId,
+      versionNo,
+      storageKey: stored.storageKey,
+      mimeType: stored.mimeType,
+      sizeBytes: stored.size,
+      sha256: stored.sha256,
+      originalFilename: stored.originalFilename,
+      changeNote,
+      createdBy: actor.userId,
+    });
+    await manager.update(Artifact, artifactId, {
+      currentVersionId: inserted.identifiers[0]?.id as string,
+      latestVersionNo: versionNo,
+      status: 'published',
+    });
   }
 
   /** Best effort: the sweeper removes blobs without a version row if this fails. */

@@ -1,15 +1,32 @@
 import { pipeline } from 'node:stream/promises';
-import { Controller, Get, Param, Post, Query, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  Res,
+} from '@nestjs/common';
 import {
   type ArtifactListQuery,
   type ArtifactListResponse,
   type ArtifactResponse,
-  type CreateArtifactMetadata,
+  type ArtifactVersionListResponse,
   ErrorCode,
+  type UpdateArtifactMetadata,
   artifactListQuerySchema,
   createArtifactRequestSchema,
+  createVersionRequestSchema,
+  updateArtifactRequestSchema,
 } from '@artifact-hub/shared';
 import type { Request, Response } from 'express';
+import type { z } from 'zod';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CurrentActor } from '../auth/auth.decorators.js';
 import type { Actor } from '../auth/auth.types.js';
@@ -18,6 +35,7 @@ import { ZodValidationPipe } from '../common/validation/zod-validation.pipe.js';
 import { InjectEnv } from '../config/config.module.js';
 import type { Env } from '../config/config.types.js';
 import { readMultipartUpload } from '../uploads/multipart/read-multipart-upload.js';
+import { toArtifactVersionDto } from './artifact-version.entity.js';
 import { toArtifactDto } from './artifact.entity.js';
 import { ArtifactsService } from './artifacts.service.js';
 import { attachmentDisposition, downloadFilename } from './content/content-disposition.js';
@@ -43,7 +61,7 @@ export class ArtifactsController {
   async create(@CurrentActor() actor: Actor, @Req() req: Request): Promise<ArtifactResponse> {
     const upload = await readMultipartUpload(req, { maxFileBytes: this.env.MAX_ARTIFACT_BYTES });
     try {
-      const metadata = parseMetadata(upload.fields[METADATA_FIELD]);
+      const metadata = parseMetadata(upload.fields[METADATA_FIELD], createArtifactRequestSchema);
       const artifact = await this.artifacts.create(actor, metadata, {
         stream: upload.file.stream,
         filename: upload.file.filename,
@@ -53,6 +71,36 @@ export class ArtifactsController {
       upload.discard();
       throw error;
     }
+  }
+
+  /** Multipart: a `metadata` JSON field (`CreateVersionRequest`), then the `file`. */
+  @Post(':id/versions')
+  async addVersion(
+    @CurrentActor() actor: Actor,
+    @Param('id') id: string,
+    @Req() req: Request,
+  ): Promise<ArtifactResponse> {
+    const upload = await readMultipartUpload(req, { maxFileBytes: this.env.MAX_ARTIFACT_BYTES });
+    try {
+      const metadata = parseMetadata(upload.fields[METADATA_FIELD], createVersionRequestSchema);
+      const artifact = await this.artifacts.addVersion(actor, id, metadata, {
+        stream: upload.file.stream,
+        filename: upload.file.filename,
+      });
+      return { artifact: toArtifactDto(artifact) };
+    } catch (error) {
+      upload.discard();
+      throw error;
+    }
+  }
+
+  @Get(':id/versions')
+  async listVersions(
+    @CurrentActor() actor: Actor,
+    @Param('id') id: string,
+  ): Promise<ArtifactVersionListResponse> {
+    const versions = await this.artifacts.listVersions(actor, id);
+    return { items: versions.map(toArtifactVersionDto) };
   }
 
   @Get()
@@ -118,17 +166,34 @@ export class ArtifactsController {
   async get(@CurrentActor() actor: Actor, @Param('id') id: string): Promise<ArtifactResponse> {
     return { artifact: toArtifactDto(await this.artifacts.get(actor, id)) };
   }
+
+  /** Metadata and visibility. New content goes through `POST :id/versions` instead. */
+  @Patch(':id')
+  async update(
+    @CurrentActor() actor: Actor,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(updateArtifactRequestSchema)) changes: UpdateArtifactMetadata,
+  ): Promise<ArtifactResponse> {
+    return { artifact: toArtifactDto(await this.artifacts.update(actor, id, changes)) };
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(@CurrentActor() actor: Actor, @Param('id') id: string): Promise<void> {
+    await this.artifacts.remove(actor, id);
+  }
 }
 
-function parseMetadata(raw: string | undefined): CreateArtifactMetadata {
+/** Parses the JSON in the `metadata` field with `schema`. */
+function parseMetadata<T extends z.ZodType>(raw: string | undefined, schema: T): z.output<T> {
   let value: unknown;
   try {
     value = JSON.parse(raw ?? '');
   } catch {
     throw new AppError(
       ErrorCode.VALIDATION_FAILED,
-      `Send the artifact details as JSON in a "${METADATA_FIELD}" field before the file.`,
+      `Send the details as JSON in a "${METADATA_FIELD}" field before the file.`,
     );
   }
-  return createArtifactRequestSchema.parse(value);
+  return schema.parse(value);
 }

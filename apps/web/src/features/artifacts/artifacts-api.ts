@@ -1,15 +1,24 @@
 import {
   type Artifact,
   type ArtifactListResponse,
+  type ArtifactVersion,
   artifactListResponseSchema,
   artifactResponseSchema,
+  artifactVersionListResponseSchema,
   type CreateArtifactRequest,
+  type CreateVersionRequest,
+  type UpdateArtifactRequest,
 } from '@artifact-hub/shared';
 import { apiFetchContent, apiRequest } from '@/lib/api/client.ts';
 import type { ArtifactListParams } from './artifacts.types.ts';
 
-/** One artifact: `['artifact', id, …]`. Lists: `['artifacts', params]`, invalidated together. */
+/**
+ * One artifact: `['artifact', id]`, its versions under it (invalidating the artifact refreshes
+ * both). Lists: `['artifacts', params]`, invalidated together.
+ */
 export const artifactQueryKey = (id: string) => ['artifact', id] as const;
+export const artifactVersionsQueryKey = (id: string) =>
+  [...artifactQueryKey(id), 'versions'] as const;
 export const artifactListsQueryKey = ['artifacts'] as const;
 export const artifactListQueryKey = (params: ArtifactListParams) =>
   [...artifactListsQueryKey, params] as const;
@@ -37,15 +46,65 @@ export async function publishArtifact(
 
 export async function fetchArtifact(id: string, signal?: AbortSignal): Promise<Artifact> {
   return (
-    await apiRequest(`/artifacts/${encodeURIComponent(id)}`, {
+    await apiRequest(artifactPath(id), {
       schema: artifactResponseSchema,
       signal,
     })
   ).artifact;
 }
 
+const artifactPath = (id: string) => `/artifacts/${encodeURIComponent(id)}`;
+
+/** Multipart, like publishing: the details first, then the file. Returns the updated artifact. */
+export async function publishVersion(
+  id: string,
+  file: File,
+  metadata: CreateVersionRequest,
+): Promise<Artifact> {
+  const form = new FormData();
+  form.append('metadata', JSON.stringify(metadata));
+  form.append('file', file);
+  return (
+    await apiRequest(`${artifactPath(id)}/versions`, {
+      method: 'POST',
+      body: form,
+      schema: artifactResponseSchema,
+    })
+  ).artifact;
+}
+
+/** Every version, newest first. */
+export async function fetchArtifactVersions(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ArtifactVersion[]> {
+  return (
+    await apiRequest(`${artifactPath(id)}/versions`, {
+      schema: artifactVersionListResponseSchema,
+      signal,
+    })
+  ).items;
+}
+
+export async function updateArtifact(
+  id: string,
+  changes: UpdateArtifactRequest,
+): Promise<Artifact> {
+  return (
+    await apiRequest(artifactPath(id), {
+      method: 'PATCH',
+      body: changes,
+      schema: artifactResponseSchema,
+    })
+  ).artifact;
+}
+
+export async function deleteArtifact(id: string): Promise<void> {
+  await apiRequest(artifactPath(id), { method: 'DELETE' });
+}
+
 function contentPath(artifactId: string, versionNo: number): string {
-  return `/artifacts/${encodeURIComponent(artifactId)}/versions/${versionNo}/content`;
+  return `${artifactPath(artifactId)}/versions/${versionNo}/content`;
 }
 
 /** URL of a version's bytes, for `<img>`, `<iframe>` and download links. */

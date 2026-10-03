@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import type { publishFormSchema } from './publish-form-schema.ts';
+import type { metadataFormSchema } from './metadata-form-schema.ts';
 
 export interface ArtifactListParams {
   scope: 'mine';
@@ -8,7 +8,7 @@ export interface ArtifactListParams {
   pageSize: number;
 }
 
-/** What the publish form holds before the schema normalizes it (tags as one string). */
-export type PublishFormValues = z.input<typeof publishFormSchema>;
+/** What the details form holds before the schema normalizes it (tags as one string). */
+export type MetadataFormValues = z.input<typeof metadataFormSchema>;
 /** What it submits. */
-export type PublishFormOutput = z.output<typeof publishFormSchema>;
+export type MetadataFormOutput = z.output<typeof metadataFormSchema>;

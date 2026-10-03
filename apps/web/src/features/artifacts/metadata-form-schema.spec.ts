@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { publishFormSchema } from './publish-form-schema.ts';
+import { metadataFormSchema } from './metadata-form-schema.ts';
 
-describe('publishFormSchema', () => {
+describe('metadataFormSchema', () => {
   it('splits, normalizes and de-duplicates comma-separated tags', () => {
-    const result = publishFormSchema.parse({
+    const result = metadataFormSchema.parse({
       title: ' Pricing ',
       description: '',
       tags: 'Marketing, q3,, marketing ',
@@ -13,14 +13,14 @@ describe('publishFormSchema', () => {
 
   it('reports tag problems on the tags field itself', () => {
     const tags = Array.from({ length: 11 }, (_, i) => `t${i}`).join(',');
-    const result = publishFormSchema.safeParse({ title: 'x', description: '', tags });
+    const result = metadataFormSchema.safeParse({ title: 'x', description: '', tags });
     expect(result.error?.issues).toEqual([
       expect.objectContaining({ path: ['tags'], message: 'Use at most 10 tags.' }),
     ]);
   });
 
   it('requires a title', () => {
-    const result = publishFormSchema.safeParse({ title: '  ', description: '', tags: '' });
+    const result = metadataFormSchema.safeParse({ title: '  ', description: '', tags: '' });
     expect(result.error?.issues[0]).toMatchObject({ path: ['title'], message: 'Enter a title.' });
   });
 });

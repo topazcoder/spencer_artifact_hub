@@ -1,16 +1,23 @@
-import { type Artifact, formatBytes } from '@artifact-hub/shared';
-import { DownloadIcon, LockIcon, MaximizeIcon } from 'lucide-react';
+import { type Artifact, type ArtifactVersion, formatBytes } from '@artifact-hub/shared';
+import { DownloadIcon, LockIcon, MaximizeIcon, UploadIcon } from 'lucide-react';
 import { useRef } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { InlineError, InlineLoading } from '@/components/inline-status.tsx';
 import { Badge } from '@/components/ui/badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx';
+import { ArtifactDetails } from '@/features/artifacts/artifact-details.tsx';
 import { typeLabel } from '@/features/artifacts/artifact-types.ts';
 import { artifactContentUrl } from '@/features/artifacts/artifacts-api.ts';
-import { useArtifact } from '@/features/artifacts/use-artifacts.ts';
+import { NewVersionDialog } from '@/features/artifacts/new-version-dialog.tsx';
+import { useArtifact, useArtifactVersions } from '@/features/artifacts/use-artifacts.ts';
+import { VersionList } from '@/features/artifacts/version-list.tsx';
 import { ArtifactViewer } from '@/features/artifacts/viewers/artifact-viewer.tsx';
-import { InlineError, InlineLoading } from '@/components/inline-status.tsx';
+import { useCurrentUser } from '@/features/auth/use-auth.ts';
 import { isApiError } from '@/lib/api/api-error.ts';
 import { formatRelativeTime } from '@/lib/format.ts';
+
+const VERSION_PARAM = /^[1-9]\d{0,8}$/;
 
 export function ArtifactPage() {
   const { id = '' } = useParams();
@@ -31,12 +38,33 @@ export function ArtifactPage() {
       </div>
     );
   }
-  return <ArtifactDetails artifact={artifact} />;
+  return <ArtifactView artifact={artifact} />;
 }
 
-function ArtifactDetails({ artifact }: { artifact: Artifact }) {
+/**
+ * The version picked with `?v=N`, or the current one. `undefined` while the version list
+ * loads, `null` if there's no such version.
+ */
+function useSelectedVersion(artifact: Artifact): ArtifactVersion | null | undefined {
+  const [searchParams] = useSearchParams();
+  const param = searchParams.get('v');
+  const current = artifact.currentVersion;
+  const requested = param !== null && VERSION_PARAM.test(param) ? Number(param) : null;
+  const wantsOther = param !== null && requested !== current?.versionNo;
+  const { data: versions, error } = useArtifactVersions(artifact.id, { enabled: wantsOther });
+
+  if (!wantsOther) return current;
+  if (requested === null || error) return null;
+  return versions ? (versions.find((v) => v.versionNo === requested) ?? null) : undefined;
+}
+
+function ArtifactView({ artifact }: { artifact: Artifact }) {
   const viewerRef = useRef<HTMLDivElement>(null);
-  const version = artifact.currentVersion;
+  const navigate = useNavigate();
+  const { data: user } = useCurrentUser();
+  const canEdit = user?.id === artifact.owner.id;
+  const current = artifact.currentVersion;
+  const version = useSelectedVersion(artifact);
 
   return (
     <article className="grid gap-6">
@@ -72,50 +100,91 @@ function ArtifactDetails({ artifact }: { artifact: Artifact }) {
             )}
           </p>
         </div>
-        {version ? (
-          <div className="flex gap-2">
-            {document.fullscreenEnabled ? (
-              <Button variant="outline" onClick={() => void viewerRef.current?.requestFullscreen()}>
-                <MaximizeIcon aria-hidden="true" />
-                Full screen
+        <div className="flex flex-wrap gap-2">
+          {canEdit ? (
+            <NewVersionDialog
+              artifact={artifact}
+              // Show the new version, wherever the page was.
+              onPublished={() => void navigate(`/artifacts/${artifact.id}`)}
+            >
+              <Button variant="outline">
+                <UploadIcon aria-hidden="true" />
+                Upload new version
               </Button>
-            ) : null}
-            <Button asChild variant="outline">
-              <a href={artifactContentUrl(artifact.id, version.versionNo, { download: true })}>
-                <DownloadIcon aria-hidden="true" />
-                Download
-              </a>
-            </Button>
-          </div>
-        ) : null}
-      </header>
-
-      {artifact.description || artifact.tags.length > 0 ? (
-        <div className="grid gap-3">
-          {artifact.description ? (
-            <p className="max-w-3xl whitespace-pre-line text-sm">{artifact.description}</p>
+            </NewVersionDialog>
           ) : null}
-          {artifact.tags.length > 0 ? (
-            <ul className="flex flex-wrap gap-1.5" aria-label="Tags">
-              {artifact.tags.map((tag) => (
-                <li key={tag}>
-                  <Badge variant="outline">{tag}</Badge>
-                </li>
-              ))}
-            </ul>
+          {version ? (
+            <>
+              {document.fullscreenEnabled ? (
+                <Button
+                  variant="outline"
+                  onClick={() => void viewerRef.current?.requestFullscreen()}
+                >
+                  <MaximizeIcon aria-hidden="true" />
+                  Full screen
+                </Button>
+              ) : null}
+              <Button asChild variant="outline">
+                <a href={artifactContentUrl(artifact.id, version.versionNo, { download: true })}>
+                  <DownloadIcon aria-hidden="true" />
+                  Download
+                </a>
+              </Button>
+            </>
           ) : null}
         </div>
+      </header>
+
+      {version && current && version.versionNo !== current.versionNo ? (
+        <p
+          role="status"
+          className="rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground"
+        >
+          You're viewing v{version.versionNo}, an earlier version.{' '}
+          <Link to={`/artifacts/${artifact.id}`} className="font-medium text-foreground underline">
+            Show the latest (v{current.versionNo})
+          </Link>
+        </p>
       ) : null}
 
-      <div
-        ref={viewerRef}
-        className="h-[75vh] overflow-hidden rounded-xl border bg-background [&:fullscreen]:h-screen [&:fullscreen]:rounded-none [&:fullscreen]:border-0"
-      >
-        {version ? (
-          <ArtifactViewer artifact={artifact} version={version} />
-        ) : (
-          <InlineError error="This artifact is waiting for its first upload." />
-        )}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div
+          ref={viewerRef}
+          className="h-[75vh] overflow-hidden rounded-xl border bg-background [&:fullscreen]:h-screen [&:fullscreen]:rounded-none [&:fullscreen]:border-0"
+        >
+          {version ? (
+            <ArtifactViewer artifact={artifact} version={version} />
+          ) : version === undefined ? (
+            <InlineLoading />
+          ) : current ? (
+            <InlineError error="This version doesn't exist." />
+          ) : (
+            <InlineError error="This artifact is waiting for its first upload." />
+          )}
+        </div>
+
+        <aside>
+          <Tabs defaultValue="details">
+            <TabsList className="w-full">
+              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="versions">Versions</TabsTrigger>
+            </TabsList>
+            <TabsContent value="details" className="pt-2">
+              <ArtifactDetails artifact={artifact} canEdit={canEdit} />
+            </TabsContent>
+            <TabsContent value="versions" className="pt-2">
+              {current ? (
+                <VersionList
+                  artifactId={artifact.id}
+                  currentVersionNo={current.versionNo}
+                  selectedVersionNo={version?.versionNo ?? current.versionNo}
+                />
+              ) : (
+                <p className="text-sm text-muted-foreground">No versions yet.</p>
+              )}
+            </TabsContent>
+          </Tabs>
+        </aside>
       </div>
     </article>
   );

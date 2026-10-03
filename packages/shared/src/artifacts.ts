@@ -64,27 +64,64 @@ export const artifactTagsSchema = z
   .max(ARTIFACT_TAGS_MAX, `Use at most ${ARTIFACT_TAGS_MAX} tags.`)
   .transform((tags) => [...new Set(tags)]);
 
+const artifactTitleSchema = z
+  .string()
+  .trim()
+  .min(1, 'Enter a title.')
+  .max(ARTIFACT_TITLE_MAX_LENGTH, `Keep the title to ${ARTIFACT_TITLE_MAX_LENGTH} characters.`);
+
+const artifactDescriptionSchema = z
+  .string()
+  .trim()
+  .max(
+    ARTIFACT_DESCRIPTION_MAX_LENGTH,
+    `Keep the description to ${ARTIFACT_DESCRIPTION_MAX_LENGTH} characters.`,
+  );
+
 /** Metadata sent with a new artifact (the `metadata` part of the multipart upload). */
 export const createArtifactRequestSchema = z.object({
-  title: z
-    .string()
-    .trim()
-    .min(1, 'Enter a title.')
-    .max(ARTIFACT_TITLE_MAX_LENGTH, `Keep the title to ${ARTIFACT_TITLE_MAX_LENGTH} characters.`),
-  description: z
-    .string()
-    .trim()
-    .max(
-      ARTIFACT_DESCRIPTION_MAX_LENGTH,
-      `Keep the description to ${ARTIFACT_DESCRIPTION_MAX_LENGTH} characters.`,
-    )
-    .default(''),
+  title: artifactTitleSchema,
+  description: artifactDescriptionSchema.default(''),
   tags: artifactTagsSchema.default([]),
   visibility: artifactVisibilitySchema.default('private'),
 });
 
 export type CreateArtifactRequest = z.input<typeof createArtifactRequestSchema>;
 export type CreateArtifactMetadata = z.output<typeof createArtifactRequestSchema>;
+
+/** Body of `PATCH /api/artifacts/:id`: only the fields to change. Never creates a version. */
+export const updateArtifactRequestSchema = z
+  .strictObject({
+    title: artifactTitleSchema,
+    description: artifactDescriptionSchema,
+    tags: artifactTagsSchema,
+    visibility: artifactVisibilitySchema,
+  })
+  .partial()
+  .refine((update) => Object.values(update).some((value) => value !== undefined), {
+    message: 'Send at least one field to change.',
+  });
+
+export type UpdateArtifactRequest = z.input<typeof updateArtifactRequestSchema>;
+export type UpdateArtifactMetadata = z.output<typeof updateArtifactRequestSchema>;
+
+export const VERSION_CHANGE_NOTE_MAX_LENGTH = 500;
+
+/** Details sent with a new version (the `metadata` part of the multipart upload). */
+export const createVersionRequestSchema = z.object({
+  /** What changed. Blank means none. */
+  changeNote: z
+    .string()
+    .trim()
+    .max(
+      VERSION_CHANGE_NOTE_MAX_LENGTH,
+      `Keep the change note to ${VERSION_CHANGE_NOTE_MAX_LENGTH} characters.`,
+    )
+    .default(''),
+});
+
+export type CreateVersionRequest = z.input<typeof createVersionRequestSchema>;
+export type CreateVersionMetadata = z.output<typeof createVersionRequestSchema>;
 
 export const artifactVersionSchema = z.object({
   id: z.uuid(),
@@ -121,6 +158,13 @@ export type Artifact = z.infer<typeof artifactSchema>;
 export const artifactResponseSchema = z.object({ artifact: artifactSchema });
 
 export type ArtifactResponse = z.infer<typeof artifactResponseSchema>;
+
+/** Response of `GET /api/artifacts/:id/versions`: every version, newest first. */
+export const artifactVersionListResponseSchema = z.object({
+  items: z.array(artifactVersionSchema),
+});
+
+export type ArtifactVersionListResponse = z.infer<typeof artifactVersionListResponseSchema>;
 
 export const ARTIFACT_LIST_DEFAULT_PAGE_SIZE = 24;
 export const ARTIFACT_LIST_MAX_PAGE_SIZE = 50;

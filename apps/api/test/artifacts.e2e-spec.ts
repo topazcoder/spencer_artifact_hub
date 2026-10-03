@@ -5,7 +5,9 @@ import {
   apiErrorBodySchema,
   artifactListResponseSchema,
   artifactResponseSchema,
+  artifactVersionListResponseSchema,
   type CreateArtifactRequest,
+  type CreateVersionRequest,
   ErrorCode,
 } from '@artifact-hub/shared';
 import request, { type Response } from 'supertest';
@@ -68,6 +70,41 @@ describe('Artifacts (e2e)', () => {
       .set('Cookie', user.cookie)
       .field('metadata', JSON.stringify(metadata))
       .attach('file', file, filename);
+  }
+
+  function publishVersion(
+    user: TestUser,
+    id: string,
+    file: Buffer,
+    filename: string,
+    metadata: CreateVersionRequest = {},
+  ) {
+    return http()
+      .post(`/api/artifacts/${id}/versions`)
+      .set('Origin', TEST_ORIGIN)
+      .set('Cookie', user.cookie)
+      .field('metadata', JSON.stringify(metadata))
+      .attach('file', file, filename);
+  }
+
+  function patch(user: TestUser, id: string, body: unknown) {
+    return http()
+      .patch(`/api/artifacts/${id}`)
+      .set('Origin', TEST_ORIGIN)
+      .set('Cookie', user.cookie)
+      .send(body as object);
+  }
+
+  function remove(user: TestUser, id: string) {
+    return http()
+      .delete(`/api/artifacts/${id}`)
+      .set('Origin', TEST_ORIGIN)
+      .set('Cookie', user.cookie);
+  }
+
+  async function publishedId(user: TestUser, metadata: unknown = METADATA): Promise<string> {
+    const res = await publish(user, fixtures.markdown, 'notes.md', metadata).expect(201);
+    return artifactResponseSchema.parse(res.body).artifact.id;
   }
 
   function get(user: TestUser, id: string) {
@@ -380,6 +417,192 @@ describe('Artifacts (e2e)', () => {
 
     it('requires a session', async () => {
       await content(null, htmlId).expect(401);
+    });
+  });
+
+  describe('POST /api/artifacts/:id/versions', () => {
+    it('adds the next version with its change note and makes it current', async () => {
+      const id = await publishedId(ada);
+      const res = await publishVersion(ada, id, fixtures.html, 'notes.html', {
+        changeNote: ' Turned it into a page ',
+      }).expect(201);
+
+      expect(artifactResponseSchema.parse(res.body).artifact).toMatchObject({
+        id,
+        title: METADATA.title,
+        latestVersionNo: 2,
+        currentVersion: {
+          versionNo: 2,
+          mimeType: 'text/html',
+          changeNote: 'Turned it into a page',
+          originalFilename: 'notes.html',
+        },
+      });
+      // Earlier versions stay readable.
+      expect((await content(ada, id, 1).expect(200)).body).toEqual(fixtures.markdown);
+      expect((await content(ada, id, 2).expect(200)).body).toEqual(fixtures.html);
+    });
+
+    it('stores a blank change note as none', async () => {
+      const id = await publishedId(ada);
+      const res = await publishVersion(ada, id, fixtures.svg, 'logo.svg', {
+        changeNote: '  ',
+      }).expect(201);
+      expect(artifactResponseSchema.parse(res.body).artifact.currentVersion?.changeNote).toBeNull();
+    });
+
+    it('answers 404 to other users without storing anything', async () => {
+      const id = await publishedId(ada);
+      const before = await blobFiles();
+      await publishVersion(bob, id, fixtures.svg, 'logo.svg').expect(404);
+      expect(await blobFiles()).toEqual(before);
+      expect(artifactResponseSchema.parse((await get(ada, id)).body).artifact.latestVersionNo).toBe(
+        1,
+      );
+    });
+
+    it('rejects unsupported content and keeps the current version', async () => {
+      const id = await publishedId(ada);
+      const before = await blobFiles();
+      const res = await publishVersion(ada, id, fixtures.exe, 'setup.png').expect(415);
+      expect(errorOf(res).code).toBe(ErrorCode.UNSUPPORTED_TYPE);
+      expect(await blobFiles()).toEqual(before);
+      expect(artifactResponseSchema.parse((await get(ada, id)).body).artifact.latestVersionNo).toBe(
+        1,
+      );
+    });
+
+    it('answers 409 and removes its blob when another version was committed meanwhile', async () => {
+      const id = await publishedId(ada);
+      const db = app.get(DataSource);
+      const storage = app.get<StorageDriver>(STORAGE_DRIVER);
+      const put = storage.put.bind(storage);
+      const before = await blobFiles();
+      // Another upload commits version 2 while this one is storing its blob.
+      const spy = vi.spyOn(storage, 'put').mockImplementationOnce(async (...args) => {
+        const result = await put(...args);
+        await db.query('UPDATE artifacts SET latest_version_no = 2 WHERE id = $1', [id]);
+        return result;
+      });
+      try {
+        const res = await publishVersion(ada, id, fixtures.svg, 'logo.svg').expect(409);
+        expect(errorOf(res).code).toBe(ErrorCode.CONFLICT);
+      } finally {
+        spy.mockRestore();
+        await db.query('UPDATE artifacts SET latest_version_no = 1 WHERE id = $1', [id]);
+      }
+      expect(await blobFiles()).toEqual(before);
+    });
+
+    it('validates the change note and requires the metadata field', async () => {
+      const id = await publishedId(ada);
+      const long = await publishVersion(ada, id, fixtures.svg, 'logo.svg', {
+        changeNote: 'x'.repeat(501),
+      }).expect(400);
+      expect(errorOf(long).details).toEqual([expect.objectContaining({ path: 'changeNote' })]);
+
+      const missing = await http()
+        .post(`/api/artifacts/${id}/versions`)
+        .set('Origin', TEST_ORIGIN)
+        .set('Cookie', ada.cookie)
+        .attach('file', fixtures.svg, 'logo.svg')
+        .expect(400);
+      expect(errorOf(missing).code).toBe(ErrorCode.VALIDATION_FAILED);
+    });
+  });
+
+  describe('GET /api/artifacts/:id/versions', () => {
+    it('lists every version, newest first', async () => {
+      const id = await publishedId(ada);
+      await publishVersion(ada, id, fixtures.svg, 'logo.svg', { changeNote: 'Logo' }).expect(201);
+
+      const res = await http().get(`/api/artifacts/${id}/versions`).set('Cookie', ada.cookie);
+      const { items } = artifactVersionListResponseSchema.parse(res.body);
+      expect(items.map((v) => [v.versionNo, v.mimeType, v.changeNote])).toEqual([
+        [2, 'image/svg+xml', 'Logo'],
+        [1, 'text/markdown', null],
+      ]);
+    });
+
+    it('answers 404 to other users', async () => {
+      const id = await publishedId(ada);
+      await http().get(`/api/artifacts/${id}/versions`).set('Cookie', bob.cookie).expect(404);
+    });
+  });
+
+  describe('PATCH /api/artifacts/:id', () => {
+    it('changes only the fields sent, without a new version', async () => {
+      const id = await publishedId(ada);
+      const { updatedAt } = artifactResponseSchema.parse((await get(ada, id)).body).artifact;
+
+      const res = await patch(ada, id, { title: ' Renamed ', tags: ['New', 'new'] }).expect(200);
+      const { artifact } = artifactResponseSchema.parse(res.body);
+      expect(artifact).toMatchObject({
+        title: 'Renamed',
+        description: METADATA.description,
+        tags: ['new'],
+        latestVersionNo: 1,
+      });
+      expect(artifact.updatedAt > updatedAt).toBe(true);
+    });
+
+    it('clears the description and tags', async () => {
+      const id = await publishedId(ada);
+      const res = await patch(ada, id, { description: '', tags: [] }).expect(200);
+      expect(artifactResponseSchema.parse(res.body).artifact).toMatchObject({
+        description: '',
+        tags: [],
+      });
+    });
+
+    it.each([{}, { title: '' }, { ownerId: randomUUID() }, { visibility: 'secret' }])(
+      'rejects %j',
+      async (body) => {
+        const id = await publishedId(ada);
+        expect(errorOf(await patch(ada, id, body).expect(400)).code).toBe(
+          ErrorCode.VALIDATION_FAILED,
+        );
+      },
+    );
+
+    it('answers 404 to other users and leaves the artifact unchanged', async () => {
+      const id = await publishedId(ada);
+      await patch(bob, id, { title: 'Hijacked' }).expect(404);
+      expect(artifactResponseSchema.parse((await get(ada, id)).body).artifact.title).toBe(
+        METADATA.title,
+      );
+    });
+
+    it('requires a same-origin request', async () => {
+      const id = await publishedId(ada);
+      await patch(ada, id, { title: 'x' }).set('Origin', 'https://evil.example').expect(403);
+    });
+  });
+
+  describe('DELETE /api/artifacts/:id', () => {
+    it('hides the artifact from everyone, owner included, and keeps its rows', async () => {
+      const title = `Deleted ${randomUUID()}`;
+      const id = await publishedId(ada, { title });
+      await remove(ada, id).expect(204);
+
+      await get(ada, id).expect(404);
+      await content(ada, id, 1).expect(404);
+      await publishVersion(ada, id, fixtures.svg, 'logo.svg').expect(404);
+      await patch(ada, id, { title: 'Back' }).expect(404);
+      await remove(ada, id).expect(404);
+      const page = await listPage(ada, { pageSize: 50 });
+      expect(page.items.map((item) => item.title)).not.toContain(title);
+
+      const [row] = await app
+        .get(DataSource)
+        .query('SELECT deleted_at FROM artifacts WHERE id = $1', [id]);
+      expect(row.deleted_at).toBeInstanceOf(Date);
+    });
+
+    it('answers 404 to other users and keeps the artifact', async () => {
+      const id = await publishedId(ada);
+      await remove(bob, id).expect(404);
+      await get(ada, id).expect(200);
     });
   });
 
