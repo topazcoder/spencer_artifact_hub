@@ -2,13 +2,21 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
+  ARTIFACT_TAG_LIST_MAX,
   type CreateArtifactMetadata,
   type CreateVersionMetadata,
   ErrorCode,
   type UpdateArtifactMetadata,
 } from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { DataSource, type EntityManager, In, IsNull, type Repository } from 'typeorm';
+import {
+  DataSource,
+  type EntityManager,
+  In,
+  IsNull,
+  type Repository,
+  type SelectQueryBuilder,
+} from 'typeorm';
 import { z } from 'zod';
 import { AccessGrantsService } from '../access/access-grants.service.js';
 import {
@@ -27,13 +35,16 @@ import { ArtifactVersion } from './artifact-version.entity.js';
 import { Artifact } from './artifact.entity.js';
 import type {
   ArtifactContent,
+  ArtifactFilters,
   ArtifactListOptions,
   ArtifactPage,
   ArtifactView,
   NewContent,
   ResolvedArtifact,
   StoredContent,
+  TagCount,
 } from './artifacts.types.js';
+import { prefixTsquery } from './search/prefix-tsquery.js';
 
 const idSchema = z.guid();
 const VERSION_NO = /^[1-9]\d{0,8}$/;
@@ -210,36 +221,24 @@ export class ArtifactsService {
   }
 
   /**
-   * Published artifacts the actor may view, most recently updated first, optionally narrowed by
-   * `options` (e.g. `ownerId`, `sharedWith`). Filters only ever narrow what `AccessPolicy` allows.
+   * Published artifacts the actor may view, narrowed by `options`: the most relevant first when
+   * searching, otherwise the most recently updated.
    */
   async list(actor: Actor, options: ArtifactListOptions): Promise<ArtifactPage> {
-    const qb = this.artifacts
-      .createQueryBuilder('artifact')
-      .innerJoinAndSelect('artifact.owner', 'owner')
+    const { qb, tsquery } = this.filtered(actor, options);
+    qb.innerJoinAndSelect('artifact.owner', 'owner')
       .leftJoinAndSelect('artifact.currentVersion', 'currentVersion')
-      .where("artifact.status = 'published'")
-      // `id` breaks ties, so the order (and therefore each page) is deterministic.
-      .orderBy('artifact.updatedAt', 'DESC')
-      .addOrderBy('artifact.id', 'DESC')
       // Joins are to-one, so OFFSET/LIMIT count artifacts, not joined rows.
       .offset((options.page - 1) * options.pageSize)
       .limit(options.pageSize);
-    this.access.restrictToViewable(qb, 'artifact', actor);
-
-    if (options.ownerId) {
-      qb.andWhere('artifact.ownerId = :ownerId', { ownerId: options.ownerId });
+    if (tsquery) {
+      // Weighted by where words match: title (A) above tags, description and content. Not
+      // ts_rank_cd: it rewards nearby words, and the end of one field sits next to the start
+      // of the next in the vector.
+      qb.orderBy(`ts_rank(artifact.searchVector, to_tsquery('english', :tsquery))`, 'DESC');
     }
-    if (options.visibility) {
-      qb.andWhere('artifact.visibility = :visibility', { visibility: options.visibility });
-    }
-    if (options.sharedWith) {
-      qb.andWhere('artifact.ownerId != :sharedWith').andWhere(
-        `EXISTS (SELECT 1 FROM shares share
-                 WHERE share.artifact_id = artifact.id AND share.user_id = :sharedWith)`,
-        { sharedWith: options.sharedWith },
-      );
-    }
+    // `id` breaks ties, so the order (and therefore each page) is deterministic.
+    qb.addOrderBy('artifact.updatedAt', 'DESC').addOrderBy('artifact.id', 'DESC');
 
     const [artifacts, total] = await qb.getManyAndCount();
     const grants = await this.grants.forArtifacts(
@@ -252,6 +251,57 @@ export class ArtifactsService {
       ),
     );
     return { items, total };
+  }
+
+  /** The tags of the artifacts `filters` cover, the most used first, for the gallery's filter. */
+  async listTags(actor: Actor, filters: ArtifactFilters): Promise<TagCount[]> {
+    const { qb } = this.filtered(actor, filters);
+    const [scoped, parameters] = qb.select('artifact.tags', 'tags').getQueryAndParameters();
+    return this.dataSource.query(
+      `SELECT tag, count(*)::int AS count
+       FROM (${scoped}) scoped CROSS JOIN LATERAL unnest(scoped.tags) AS tag
+       GROUP BY tag ORDER BY count DESC, tag ASC LIMIT $${parameters.length + 1}`,
+      [...parameters, ARTIFACT_TAG_LIST_MAX],
+    );
+  }
+
+  /** Published artifacts the actor may view, narrowed by `filters`. */
+  private filtered(
+    actor: Actor,
+    filters: ArtifactFilters,
+  ): { qb: SelectQueryBuilder<Artifact>; tsquery: string | null } {
+    const qb = this.artifacts.createQueryBuilder('artifact').where("artifact.status = 'published'");
+    this.access.restrictToViewable(qb, 'artifact', actor);
+
+    if (filters.ownerId) {
+      qb.andWhere('artifact.ownerId = :ownerId', { ownerId: filters.ownerId });
+    }
+    if (filters.visibility) {
+      qb.andWhere('artifact.visibility = :visibility', { visibility: filters.visibility });
+    }
+    if (filters.sharedWith) {
+      qb.andWhere('artifact.ownerId != :sharedWith').andWhere(
+        `EXISTS (SELECT 1 FROM shares share
+                 WHERE share.artifact_id = artifact.id AND share.user_id = :sharedWith)`,
+        { sharedWith: filters.sharedWith },
+      );
+    }
+    if (filters.mimeTypes) {
+      qb.andWhere(
+        `EXISTS (SELECT 1 FROM artifact_versions type_version
+                 WHERE type_version.id = artifact.current_version_id
+                   AND type_version.mime_type IN (:...mimeTypes))`,
+        { mimeTypes: filters.mimeTypes },
+      );
+    }
+    if (filters.tag) {
+      qb.andWhere('artifact.tags @> ARRAY[:tag]::text[]', { tag: filters.tag });
+    }
+    const tsquery = filters.search ? prefixTsquery(filters.search) : null;
+    if (tsquery) {
+      qb.andWhere(`artifact.searchVector @@ to_tsquery('english', :tsquery)`, { tsquery });
+    }
+    return { qb, tsquery };
   }
 
   /** Loads the artifact and what access decisions need. `NOT_FOUND` if it doesn't exist. */

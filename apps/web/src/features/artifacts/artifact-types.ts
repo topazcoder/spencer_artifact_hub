@@ -1,4 +1,8 @@
-import { ARTIFACT_TITLE_MAX_LENGTH, type ArtifactMimeType } from '@artifact-hub/shared';
+import {
+  ARTIFACT_TITLE_MAX_LENGTH,
+  type ArtifactMimeType,
+  type ArtifactTypeFilter,
+} from '@artifact-hub/shared';
 
 /** How a type is displayed: `iframe` (sandboxed document), `image`, `markdown` or `pdf`. */
 export type ViewerKind = 'iframe' | 'image' | 'markdown' | 'pdf';
@@ -18,6 +22,15 @@ const TYPES: Record<ArtifactMimeType, TypeInfo> = {
   'image/webp': { label: 'WebP', viewer: 'image' },
   'image/gif': { label: 'GIF', viewer: 'image' },
   'application/pdf': { label: 'PDF', viewer: 'pdf' },
+};
+
+/** Labels of the gallery's type filter. */
+export const TYPE_FILTER_LABELS: Record<ArtifactTypeFilter, string> = {
+  html: 'HTML',
+  image: 'Images',
+  pdf: 'PDF',
+  markdown: 'Markdown',
+  svg: 'SVG',
 };
 
 export function typeLabel(mimeType: ArtifactMimeType): string {

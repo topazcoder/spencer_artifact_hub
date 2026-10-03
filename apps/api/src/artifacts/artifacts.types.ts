@@ -31,13 +31,23 @@ export interface ArtifactContent {
   open(): Promise<Readable>;
 }
 
-export interface ArtifactListOptions {
+/** Which artifacts a list covers. Filters only ever narrow what `AccessPolicy` allows. */
+export interface ArtifactFilters {
   /** Only artifacts owned by this user. */
   ownerId?: string;
   /** Only artifacts with this visibility. */
   visibility?: ArtifactVisibility;
   /** Only other users' artifacts shared with this user by name. */
   sharedWith?: string;
+  /** Words (or starts of words) to find in the title, tags, description and content. */
+  search?: string;
+  /** Only artifacts whose current version has one of these types. */
+  mimeTypes?: readonly ArtifactMimeType[];
+  /** Only artifacts with this (normalized) tag. */
+  tag?: string;
+}
+
+export interface ArtifactListOptions extends ArtifactFilters {
   /** 1-based. */
   page: number;
   pageSize: number;
@@ -57,6 +67,12 @@ export interface ArtifactView {
 export interface ResolvedArtifact {
   artifact: Artifact;
   target: AccessTarget;
+}
+
+/** A tag and how many of the listed artifacts have it. */
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
 export interface ArtifactPage {

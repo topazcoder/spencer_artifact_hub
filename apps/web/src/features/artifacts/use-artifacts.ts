@@ -1,5 +1,6 @@
 import type {
   Artifact,
+  ArtifactListScope,
   CreateArtifactRequest,
   CreateVersionRequest,
   UpdateArtifactRequest,
@@ -10,10 +11,12 @@ import {
   artifactListQueryKey,
   artifactListsQueryKey,
   artifactQueryKey,
+  artifactTagsQueryKey,
   artifactVersionsQueryKey,
   deleteArtifact,
   fetchArtifact,
   fetchArtifacts,
+  fetchArtifactTags,
   fetchArtifactVersions,
   publishArtifact,
   publishVersion,
@@ -36,6 +39,14 @@ export function useArtifactList(params: ArtifactListParams) {
     queryFn: ({ signal }) => fetchArtifacts(params, signal),
     // Keep showing the current page while the next one loads.
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Invalidated with the lists, since publishing or editing changes them. */
+export function useArtifactTags(scope: ArtifactListScope) {
+  return useQuery({
+    queryKey: artifactTagsQueryKey(scope),
+    queryFn: ({ signal }) => fetchArtifactTags(scope, signal),
   });
 }
 

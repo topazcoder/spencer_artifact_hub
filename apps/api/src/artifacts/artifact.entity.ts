@@ -72,6 +72,10 @@ export class Artifact {
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 
+  /** Full-text search vector, maintained by a database trigger; never read or written here. */
+  @Column({ type: 'tsvector', select: false, insert: false, update: false })
+  searchVector: string;
+
   /** Soft delete: the artifact is gone for everyone, its rows and blobs are kept. */
   @Column({ type: 'timestamptz', nullable: true })
   deletedAt: Date | null;

@@ -1,4 +1,5 @@
 import {
+  ARTIFACT_TYPE_FILTERS,
   type Artifact,
   type ArtifactMimeType,
   type ArtifactVersion,
@@ -27,6 +28,7 @@ function error(status: number, code: ErrorCode, message: string): Response {
 }
 
 const LIST_ROUTE = /^GET \/api\/artifacts\?(.*)$/;
+const TAGS_ROUTE = /^GET \/api\/artifacts\/tags\?(.*)$/;
 const ARTIFACT_ROUTE = /^(GET|PATCH|DELETE) \/api\/artifacts\/([^/?]+)$/;
 const VERSIONS_ROUTE = /^(GET|POST) \/api\/artifacts\/([^/?]+)\/versions$/;
 const CONTENT_ROUTE = /^GET \/api\/artifacts\/([^/?]+)\/versions\/(\d+)\/content$/;
@@ -60,6 +62,16 @@ function versionOf(file: File, versionNo: number, changeNote: string | null): Ar
   };
 }
 
+/** Like the server: every word must start a word of the title, description or a tag. */
+function matches(artifact: Artifact, q: string): boolean {
+  const words = `${artifact.title} ${artifact.description} ${artifact.tags.join(' ')}`
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u);
+  return (q.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).every((term) =>
+    words.some((word) => word.startsWith(term)),
+  );
+}
+
 /**
  * Stubs `fetch` with an in-memory version of the API (auth, config, publishing and reading
  * artifacts), so component tests run the real API client, hooks and routes.
@@ -78,6 +90,8 @@ export function installFakeApi() {
   /** Every link token handed out, live or not. */
   const linkTokens: { token: string; artifactId: string; revoked: boolean }[] = [];
   let nextPublishResponse: Response | null = null;
+  /** While set, list requests wait for it, to show what happens while results load. */
+  let listsHeld: Promise<void> | null = null;
   let nextUpdateResponse: Response | null = null;
   let maxArtifactBytes = 10 * 1024 * 1024;
   let signedIn: User | null = null;
@@ -256,11 +270,9 @@ export function installFakeApi() {
     return json(200, { items });
   };
 
-  const listArtifacts = (query: URLSearchParams): Response => {
-    const scope = query.get('scope') ?? 'mine';
-    const page = Number(query.get('page') ?? 1);
-    const pageSize = Number(query.get('pageSize') ?? 24);
-    const matching = [...artifacts.values()]
+  /** The signed-in user's artifacts in a gallery scope. */
+  const inScope = (scope: string): Artifact[] =>
+    [...artifacts.values()]
       .map(({ artifact }) => artifact)
       .filter((artifact) => {
         if (scope === 'public') return artifact.visibility === 'public';
@@ -271,10 +283,38 @@ export function installFakeApi() {
           );
         }
         return artifact.owner.id === signedIn?.id;
-      })
+      });
+
+  const listArtifacts = (query: URLSearchParams): Response => {
+    const page = Number(query.get('page') ?? 1);
+    const pageSize = Number(query.get('pageSize') ?? 24);
+    const q = query.get('q');
+    const type = query.get('type') as keyof typeof ARTIFACT_TYPE_FILTERS | null;
+    const tag = query.get('tag');
+    const matching = inScope(query.get('scope') ?? 'mine')
+      .filter((artifact) => !q || matches(artifact, q))
+      .filter(
+        (artifact) =>
+          !type ||
+          (ARTIFACT_TYPE_FILTERS[type] as readonly string[]).includes(
+            artifact.currentVersion?.mimeType ?? '',
+          ),
+      )
+      .filter((artifact) => !tag || artifact.tags.includes(tag))
       .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const items = matching.slice((page - 1) * pageSize, page * pageSize).map(seen);
     return json(200, { items, page, pageSize, total: matching.length });
+  };
+
+  const listTags = (query: URLSearchParams): Response => {
+    const counts = new Map<string, number>();
+    for (const artifact of inScope(query.get('scope') ?? 'mine')) {
+      for (const tag of artifact.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+    const items = [...counts]
+      .map(([tag, count]) => ({ tag, count }))
+      .toSorted((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+    return json(200, { items });
   };
 
   const fetchMock = vi.fn(async (input: string, init: RequestInit = {}) => {
@@ -282,9 +322,15 @@ export function installFakeApi() {
     const route = `${init.method ?? 'GET'} ${input}`;
 
     if (route === 'GET /api/config') return json(200, { maxArtifactBytes });
+    const tagsMatch = TAGS_ROUTE.exec(route);
+    if (tagsMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      return listTags(new URLSearchParams(tagsMatch[1]));
+    }
     const listMatch = LIST_ROUTE.exec(route);
     if (listMatch) {
       if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      if (listsHeld) await listsHeld;
       return listArtifacts(new URLSearchParams(listMatch[1]));
     }
     if (route === 'POST /api/artifacts' && init.body instanceof FormData) {
@@ -496,6 +542,17 @@ export function installFakeApi() {
       if (revoked) linkTokens.find((t) => t.token === token)!.revoked = true;
       access.set(artifactId, { ...accessOf(artifactId), link: revoked ? null : link });
       return token;
+    },
+    /** Holds list responses until the returned function is called. */
+    holdLists(): () => void {
+      let release!: () => void;
+      listsHeld = new Promise((resolve) => {
+        release = () => {
+          listsHeld = null;
+          resolve();
+        };
+      });
+      return release;
     },
     /** Who the artifact is shared with, as the fake server has it. */
     access(artifactId: string): ArtifactAccess {

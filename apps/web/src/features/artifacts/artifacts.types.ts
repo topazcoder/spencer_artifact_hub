@@ -1,9 +1,17 @@
-import type { ArtifactListScope } from '@artifact-hub/shared';
+import type { ArtifactListScope, ArtifactTypeFilter } from '@artifact-hub/shared';
 import type { z } from 'zod';
 import type { metadataFormSchema } from './metadata-form-schema.ts';
 
-export interface ArtifactListParams {
+/** What the gallery shows: a scope, narrowed by optional filters. */
+export interface GalleryFilters {
   scope: ArtifactListScope;
+  /** Words to search for. */
+  q?: string;
+  type?: ArtifactTypeFilter;
+  tag?: string;
+}
+
+export interface ArtifactListParams extends GalleryFilters {
   /** 1-based. */
   page: number;
   pageSize: number;

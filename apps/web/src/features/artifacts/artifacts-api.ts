@@ -1,6 +1,9 @@
 import {
   type Artifact,
   type ArtifactListResponse,
+  type ArtifactListScope,
+  type ArtifactTagListResponse,
+  artifactTagListResponseSchema,
   type ArtifactVersion,
   artifactListResponseSchema,
   artifactResponseSchema,
@@ -24,11 +27,28 @@ export const artifactListQueryKey = (params: ArtifactListParams) =>
   [...artifactListsQueryKey, params] as const;
 
 export async function fetchArtifacts(
-  { scope, page, pageSize }: ArtifactListParams,
+  { scope, page, pageSize, q, type, tag }: ArtifactListParams,
   signal?: AbortSignal,
 ): Promise<ArtifactListResponse> {
   const query = new URLSearchParams({ scope, page: String(page), pageSize: String(pageSize) });
+  for (const [key, value] of Object.entries({ q, type, tag })) {
+    if (value) query.set(key, value);
+  }
   return apiRequest(`/artifacts?${query}`, { schema: artifactListResponseSchema, signal });
+}
+
+export const artifactTagsQueryKey = (scope: ArtifactListScope) =>
+  [...artifactListsQueryKey, 'tags', scope] as const;
+
+/** The tags used in a gallery scope, the most used first. */
+export async function fetchArtifactTags(
+  scope: ArtifactListScope,
+  signal?: AbortSignal,
+): Promise<ArtifactTagListResponse['items']> {
+  const query = new URLSearchParams({ scope });
+  return (
+    await apiRequest(`/artifacts/tags?${query}`, { schema: artifactTagListResponseSchema, signal })
+  ).items;
 }
 
 /** Multipart upload: the metadata first, then the file (the server reads them in that order). */

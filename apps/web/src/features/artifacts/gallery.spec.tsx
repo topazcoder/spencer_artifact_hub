@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
-import type { Artifact, User } from '@artifact-hub/shared';
-import { cleanup, screen } from '@testing-library/react';
+import type { Artifact, ArtifactMimeType, User } from '@artifact-hub/shared';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeApi } from '@/test/fake-api.ts';
 import { renderApp } from '@/test/render-app.tsx';
+
+/** `item` with another content type and tags. */
+function variant(item: Artifact, mimeType: ArtifactMimeType, tags: string[]): Artifact {
+  return { ...item, tags, currentVersion: { ...item.currentVersion!, mimeType } };
+}
+
+const shown = () => screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
 
 describe('gallery', () => {
   let api: ReturnType<typeof installFakeApi>;
@@ -174,5 +181,93 @@ describe('gallery', () => {
     renderApp('/?scope=everything');
     expect(await screen.findByRole('heading', { name: 'My artifacts', level: 1 })).toBeTruthy();
     expect(api.calls('GET /api/artifacts?scope=mine&page=1&pageSize=24')).toBe(1);
+  });
+
+  describe('search and filters', () => {
+    beforeEach(() => {
+      api.addArtifact(variant(artifact('Pricing page', 1), 'text/html', ['marketing', 'q3']));
+      api.addArtifact(variant(artifact('Sales deck', 2), 'application/pdf', ['q3', 'sales']));
+      api.addArtifact(variant(artifact('Team photo', 3), 'image/png', ['team']));
+    });
+
+    it('searches as you type, keeping the search in the URL', async () => {
+      const user = userEvent.setup();
+      const app = renderApp('/');
+      await screen.findByText('3 artifacts');
+
+      await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'pric pag');
+      await waitFor(() => expect(app.location()).toBe('/?q=pric+pag'));
+      expect(await screen.findByText('1 artifact')).toBeTruthy();
+      expect(shown()).toEqual(['Pricing page']);
+    });
+
+    it('shows that it is searching until the results arrive', async () => {
+      const user = userEvent.setup();
+      renderApp('/');
+      await screen.findByText('3 artifacts');
+
+      const release = api.holdLists();
+      await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'deck');
+      expect(await screen.findByRole('status')).toHaveProperty('textContent', 'Searching…');
+      // Earlier results stay, marked busy.
+      expect(screen.getByRole('list', { busy: true })).toBeTruthy();
+
+      release();
+      expect(await screen.findByText('1 artifact')).toBeTruthy();
+      expect(screen.queryByRole('status')).toBeNull();
+      expect(shown()).toEqual(['Sales deck']);
+    });
+
+    it('filters by type and tag, starting again from the first page', async () => {
+      const user = userEvent.setup();
+      const app = renderApp('/?page=2');
+      const tag = await screen.findByRole('combobox', { name: 'Tag' });
+      // The most used tags first.
+      await waitFor(() =>
+        expect([...tag.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+          'All tags',
+          'q3',
+          'marketing',
+          'sales',
+          'team',
+        ]),
+      );
+
+      await user.selectOptions(tag, 'q3');
+      expect(app.location()).toBe('/?tag=q3');
+      expect(await screen.findByText('2 artifacts')).toBeTruthy();
+
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Type' }), 'PDF');
+      expect(app.location()).toBe('/?type=pdf&tag=q3');
+      await waitFor(() => expect(shown()).toEqual(['Sales deck']));
+    });
+
+    it('explains when nothing matches, and clears the filters', async () => {
+      const user = userEvent.setup();
+      const app = renderApp('/?q=nothing&type=pdf');
+      expect(await screen.findByRole('heading', { name: 'No artifacts match' })).toBeTruthy();
+      expect((screen.getByRole('searchbox', { name: 'Search' }) as HTMLInputElement).value).toBe(
+        'nothing',
+      );
+
+      await user.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]!);
+      await waitFor(() => expect(app.location()).toBe('/'));
+      expect(await screen.findByText('3 artifacts')).toBeTruthy();
+      expect((screen.getByRole('searchbox', { name: 'Search' }) as HTMLInputElement).value).toBe(
+        '',
+      );
+    });
+
+    it('keeps filters when paging, and drops them when switching tabs', async () => {
+      for (let i = 1; i <= 25; i++) api.addArtifact(artifact(`Extra ${i}`, 10 + i));
+      renderApp('/?tag=alpha');
+      expect(await screen.findByText('Page 1 of 2')).toBeTruthy();
+      expect(screen.getByRole('link', { name: 'Next page' }).getAttribute('href')).toBe(
+        '/?tag=alpha&page=2',
+      );
+      expect(screen.getByRole('link', { name: 'Company' }).getAttribute('href')).toBe(
+        '/?scope=public',
+      );
+    });
   });
 });

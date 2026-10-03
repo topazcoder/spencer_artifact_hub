@@ -105,8 +105,10 @@ artifacts
   current_version_id FK NULL, latest_version_no int default 0,
   status enum('draft','published')           -- draft = awaiting first upload (MCP upload session)
   metadata_source enum('user','ai','mixed'),
-  search_vector tsvector (title A, tags B, description C, extracted text D; added in step 15:
-                         a generated column can't read artifact_versions.extracted_text),
+  search_vector tsvector (title A, tags B, description C, current version's extracted text D;
+                         english config; kept up to date by triggers on artifacts and on
+                         artifact_versions.extracted_text, since a generated column can't read
+                         another table; GIN indexes on it and on tags),
   created_at, updated_at, deleted_at NULL
 
 artifact_versions                             -- immutable
@@ -299,7 +301,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 |---|---|---|
 | **Metadata suggestions** | Web upload form pre-fill; async fill of blanks | Fast model. HTML/MD/SVG → extracted text; images → vision input; PDF → document input. Structured output validated by zod (title ≤ 120, description ≤ 500, ≤ 8 tags, normalized lowercase). Reuses existing tags when relevant |
 | **Feedback summary** | "Feedback" tab header on each artifact; `get_feedback` | Smart model. Groups comments into themes, marks resolved vs. open, highlights disagreements; per version or across versions. Cached in `feedback_summaries`, regenerated when new comments exist (watermark) |
-| **Natural-language search** | Gallery search bar; `find_artifacts` | Fast model turns the query into `{ keywords, tags, type, owner, date range }` → Postgres full-text search (`websearch_to_tsquery`) + filters. Falls back to plain full-text search if the LLM fails. No extra embeddings provider needed |
+| **Natural-language search** | Gallery search bar; `find_artifacts` | Fast model turns the query into `{ keywords, tags, type, owner, date range }` → Postgres full-text search + filters. Falls back to plain full-text search if the LLM fails. No extra embeddings provider needed |
 
 ### 9.1 Graceful degradation (AI not configured or failing)
 
@@ -403,7 +405,9 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 POST   /api/auth/signup | /login | /logout        GET /api/auth/me
 GET    /api/tokens   POST /api/tokens   DELETE /api/tokens/:id
 
-GET    /api/artifacts?q=&scope=mine|shared|public&type=&tag=&page=&pageSize=   (public = company)
+GET    /api/artifacts?q=&scope=mine|shared|public&type=&tag=&page=&pageSize=   (public = company;
+       type = html|image|pdf|markdown|svg; q = words, each matching a word or its start, ranked)
+GET    /api/artifacts/tags?scope=                 (tags in a scope, most used first: gallery tag filter)
 POST   /api/uploads/preview                       (multipart → detected type + AI suggestions)
 POST   /api/artifacts                             (multipart: `metadata` JSON field, then `file`) [Idempotency-Key]
 GET    /api/artifacts/:id
@@ -540,7 +544,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 12. ✅ Public visibility and the *All public* tab, plus the full `AccessPolicy` test matrix. (Step 13 renames the tab *Company* and moves the visibility choice into the share dialog.)
 13. ✅ Sharing inside the company: people (view/comment) and *Everyone at the company*, each with a pinned or latest version; the share dialog; *Shared with me*. (Replaces a first version with signed-in link shares, dropped for this simpler model.)
 14. ✅ *Anyone with the link* without sign-in: one link per artifact, expiry, reset, encrypted token, and the public `/s/:token` viewer with download.
-15. Plain full-text search and filters in the gallery.
+15. ✅ Plain full-text search and filters in the gallery. (Search uses prefix matching so results show while typing: every word must match a word or its start, ranked by `ts_rank` with the field weights. Type and tag filters, and a tag list per scope.)
 
 **Comments**
 16. Comments API: replies, resolve, edit and delete.

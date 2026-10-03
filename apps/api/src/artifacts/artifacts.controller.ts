@@ -16,6 +16,10 @@ import {
   type ArtifactListQuery,
   type ArtifactListResponse,
   type ArtifactListScope,
+  type ArtifactTagListQuery,
+  type ArtifactTagListResponse,
+  ARTIFACT_TYPE_FILTERS,
+  artifactTagListQuerySchema,
   type ArtifactResponse,
   type ArtifactVersionListResponse,
   ErrorCode,
@@ -114,13 +118,25 @@ export class ArtifactsController {
     @CurrentActor() actor: Actor,
     @Query(new ZodValidationPipe(artifactListQuerySchema)) query: ArtifactListQuery,
   ): Promise<ArtifactListResponse> {
-    const { scope, page, pageSize } = query;
+    const { scope, q, type, tag, page, pageSize } = query;
     const { items, total } = await this.artifacts.list(actor, {
       ...SCOPE_FILTERS[scope](actor),
+      search: q,
+      mimeTypes: type ? ARTIFACT_TYPE_FILTERS[type] : undefined,
+      tag,
       page,
       pageSize,
     });
     return { items: items.map(toArtifactDto), page, pageSize, total };
+  }
+
+  /** The tags used in a gallery scope, for its tag filter. Declared before `:id`. */
+  @Get('tags')
+  async listTags(
+    @CurrentActor() actor: Actor,
+    @Query(new ZodValidationPipe(artifactTagListQuerySchema)) { scope }: ArtifactTagListQuery,
+  ): Promise<ArtifactTagListResponse> {
+    return { items: await this.artifacts.listTags(actor, SCOPE_FILTERS[scope](actor)) };
   }
 
   /** A version's bytes with the sandbox headers; `?download=1` saves it as a file. */

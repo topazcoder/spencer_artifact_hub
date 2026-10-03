@@ -193,9 +193,43 @@ export const ARTIFACT_LIST_MAX_PAGE = 1000;
 export const ARTIFACT_LIST_SCOPES = ['mine', 'shared', 'public'] as const;
 export type ArtifactListScope = (typeof ARTIFACT_LIST_SCOPES)[number];
 
-/** Query of `GET /api/artifacts`. */
+/** Gallery type filters, each standing for one or more content types. */
+export const ARTIFACT_TYPE_FILTERS = {
+  html: ['text/html'],
+  image: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+  pdf: ['application/pdf'],
+  markdown: ['text/markdown'],
+  svg: ['image/svg+xml'],
+} as const satisfies Record<string, readonly ArtifactMimeType[]>;
+
+export type ArtifactTypeFilter = keyof typeof ARTIFACT_TYPE_FILTERS;
+
+export const ARTIFACT_SEARCH_MAX_LENGTH = 200;
+
+/** Blank values count as absent, so a cleared filter in a URL (`?q=`) is no filter. */
+const blankAsUndefined = (value: unknown) =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
+
+/** Query of `GET /api/artifacts`. Filters narrow the scope; `q` also ranks by relevance. */
 export const artifactListQuerySchema = z.object({
   scope: z.enum(ARTIFACT_LIST_SCOPES).default('mine'),
+  /** Words to find in the title, tags, description and content; each may be a word's start. */
+  q: z.preprocess(
+    blankAsUndefined,
+    z
+      .string()
+      .trim()
+      .max(
+        ARTIFACT_SEARCH_MAX_LENGTH,
+        `Keep the search to ${ARTIFACT_SEARCH_MAX_LENGTH} characters.`,
+      )
+      .optional(),
+  ),
+  type: z.preprocess(
+    blankAsUndefined,
+    z.enum(Object.keys(ARTIFACT_TYPE_FILTERS) as [ArtifactTypeFilter]).optional(),
+  ),
+  tag: z.preprocess(blankAsUndefined, artifactTagSchema.optional()),
   /** 1-based. */
   page: z.coerce.number().int().min(1).max(ARTIFACT_LIST_MAX_PAGE).default(1),
   pageSize: z.coerce
@@ -208,7 +242,21 @@ export const artifactListQuerySchema = z.object({
 
 export type ArtifactListQuery = z.output<typeof artifactListQuerySchema>;
 
-/** Newest first (by last update). A page past the end has no items. */
+/** Query of `GET /api/artifacts/tags`: the tags used in a gallery scope. */
+export const artifactTagListQuerySchema = artifactListQuerySchema.pick({ scope: true });
+
+export type ArtifactTagListQuery = z.output<typeof artifactTagListQuerySchema>;
+
+/** The most used tags first, at most `ARTIFACT_TAG_LIST_MAX`. */
+export const artifactTagListResponseSchema = z.object({
+  items: z.array(z.object({ tag: z.string(), count: z.number().int().positive() })),
+});
+
+export type ArtifactTagListResponse = z.infer<typeof artifactTagListResponseSchema>;
+
+export const ARTIFACT_TAG_LIST_MAX = 50;
+
+/** Newest first (by last update), or most relevant first when searching. A page past the end has no items. */
 export const artifactListResponseSchema = z.object({
   items: z.array(artifactSchema),
   page: z.number().int().positive(),

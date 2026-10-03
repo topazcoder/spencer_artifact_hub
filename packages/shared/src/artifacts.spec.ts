@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  artifactListQuerySchema,
   createArtifactRequestSchema,
   createVersionRequestSchema,
   updateArtifactRequestSchema,
@@ -77,5 +78,30 @@ describe('createVersionRequestSchema', () => {
     expect(createVersionRequestSchema.safeParse({ changeNote: 'x'.repeat(501) }).success).toBe(
       false,
     );
+  });
+});
+
+describe('artifactListQuerySchema', () => {
+  it('treats blank filters as none', () => {
+    expect(artifactListQuerySchema.parse({ q: '  ', type: '', tag: '' })).toEqual({
+      scope: 'mine',
+      page: 1,
+      pageSize: 24,
+    });
+  });
+
+  it('trims the search and normalizes the tag', () => {
+    expect(
+      artifactListQuerySchema.parse({ q: ' pricing page ', type: 'pdf', tag: ' Q3 ' }),
+    ).toMatchObject({ q: 'pricing page', type: 'pdf', tag: 'q3' });
+  });
+
+  it.each([
+    [{ type: 'video' }, 'type'],
+    [{ tag: 'a,b' }, 'tag'],
+    [{ q: 'x'.repeat(201) }, 'q'],
+  ])('rejects %j at %s', (input, path) => {
+    const result = artifactListQuerySchema.safeParse(input);
+    expect(result.error?.issues.map((issue) => issue.path.join('.'))).toContain(path);
   });
 });
