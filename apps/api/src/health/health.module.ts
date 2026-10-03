@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
+import { StorageModule } from '../storage/storage.module.js';
 import { HealthController } from './health.controller.js';
 
-@Module({ controllers: [HealthController] })
+@Module({ imports: [StorageModule], controllers: [HealthController] })
 export class HealthModule {}

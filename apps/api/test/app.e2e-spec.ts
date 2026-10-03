@@ -56,7 +56,7 @@ describe('App (e2e)', () => {
   describe('GET /api/health', () => {
     it('returns ok with a generated request id', async () => {
       const res = await request(app.getHttpServer()).get('/api/health').expect(200);
-      expect(res.body).toEqual({ status: 'ok', checks: { database: 'up' } });
+      expect(res.body).toEqual({ status: 'ok', checks: { database: 'up', storage: 'up' } });
       expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
     });
 

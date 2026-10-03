@@ -1,6 +1,12 @@
 import { InvalidEnvError, parseEnv } from './env.js';
 
 const DATABASE_URL = 'postgres://user:pass@localhost:5432/db';
+const PROD = {
+  NODE_ENV: 'production',
+  APP_BASE_URL: 'https://hub.example.com',
+  DATABASE_URL,
+  STORAGE_LOCAL_ROOT: '/data/blobs',
+};
 
 describe('parseEnv', () => {
   it('applies defaults for development', () => {
@@ -16,13 +22,14 @@ describe('parseEnv', () => {
       RATE_LIMIT_LOGIN_PER_IP: 20,
       RATE_LIMIT_LOGIN_PER_EMAIL: 10,
       RATE_LIMIT_LOGIN_WINDOW_SECONDS: 900,
+      STORAGE_DRIVER: 'local',
+      STORAGE_LOCAL_ROOT: '.data/blobs',
     });
   });
 
   it('defaults COOKIE_SECURE to true in production, and lets it be overridden', () => {
-    const prod = { NODE_ENV: 'production', APP_BASE_URL: 'https://hub.example.com', DATABASE_URL };
-    expect(parseEnv(prod).COOKIE_SECURE).toBe(true);
-    expect(parseEnv({ ...prod, COOKIE_SECURE: 'false' }).COOKIE_SECURE).toBe(false);
+    expect(parseEnv(PROD).COOKIE_SECURE).toBe(true);
+    expect(parseEnv({ ...PROD, COOKIE_SECURE: 'false' }).COOKIE_SECURE).toBe(false);
     expect(parseEnv({ DATABASE_URL, COOKIE_SECURE: 'true' }).COOKIE_SECURE).toBe(true);
   });
 
@@ -47,6 +54,17 @@ describe('parseEnv', () => {
 
   it('requires APP_BASE_URL and DATABASE_URL in production', () => {
     expect(() => parseEnv({ NODE_ENV: 'production' })).toThrow(/APP_BASE_URL[\s\S]*DATABASE_URL/);
+  });
+
+  it('requires STORAGE_LOCAL_ROOT in production when the local driver is used', () => {
+    expect(() => parseEnv({ ...PROD, STORAGE_LOCAL_ROOT: undefined })).toThrow(
+      /STORAGE_LOCAL_ROOT/,
+    );
+    expect(parseEnv(PROD).STORAGE_LOCAL_ROOT).toBe('/data/blobs');
+  });
+
+  it('rejects unknown storage drivers', () => {
+    expect(() => parseEnv({ STORAGE_DRIVER: 'ftp' })).toThrow(/STORAGE_DRIVER/);
   });
 
   it('reports every invalid variable at once', () => {

@@ -4,6 +4,8 @@ import type { Env } from './config.types.js';
 // Development defaults match docker-compose.yml, so `pnpm dev` works without a .env file.
 const DEV_APP_BASE_URL = 'http://localhost:5173';
 const DEV_DATABASE_URL = 'postgres://artifact_hub:artifact_hub@localhost:5432/artifact_hub';
+/** Relative to the API's working directory (`apps/api`), which git and Docker ignore. */
+const DEV_STORAGE_LOCAL_ROOT = '.data/blobs';
 
 export const envSchema = z
   .object({
@@ -29,6 +31,10 @@ export const envSchema = z
     RATE_LIMIT_LOGIN_PER_IP: z.coerce.number().int().min(1).default(20),
     RATE_LIMIT_LOGIN_PER_EMAIL: z.coerce.number().int().min(1).default(10),
     RATE_LIMIT_LOGIN_WINDOW_SECONDS: z.coerce.number().int().min(1).default(900),
+    /** Where artifact content is stored. Only `local` is implemented; s3/azure are planned. */
+    STORAGE_DRIVER: z.enum(['local', 's3', 'azure']).default('local'),
+    /** Root directory of the `local` driver (a mounted volume in production). */
+    STORAGE_LOCAL_ROOT: z.string().optional(),
   })
   .transform((env, ctx) => {
     if (env.NODE_ENV === 'production') {
@@ -36,13 +42,22 @@ export const envSchema = z
         if (!env[key])
           ctx.addIssue({ code: 'custom', path: [key], message: 'Required in production' });
       }
-      if (!env.APP_BASE_URL || !env.DATABASE_URL) return z.NEVER;
+      // Never fall back to a directory inside the container, which is lost on redeploy.
+      if (env.STORAGE_DRIVER === 'local' && !env.STORAGE_LOCAL_ROOT) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['STORAGE_LOCAL_ROOT'],
+          message: 'Required in production when STORAGE_DRIVER=local',
+        });
+      }
+      if (ctx.issues.length > 0) return z.NEVER;
     }
     return {
       ...env,
       APP_BASE_URL: (env.APP_BASE_URL ?? DEV_APP_BASE_URL).replace(/\/+$/, ''),
       DATABASE_URL: env.DATABASE_URL ?? DEV_DATABASE_URL,
       COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
+      STORAGE_LOCAL_ROOT: env.STORAGE_LOCAL_ROOT ?? DEV_STORAGE_LOCAL_ROOT,
     };
   });
 

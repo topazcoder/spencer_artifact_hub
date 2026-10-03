@@ -10,6 +10,8 @@ export const testEnv = parseEnv({
   // High enough that suites logging in repeatedly never hit them; the rate-limit test lowers them.
   RATE_LIMIT_LOGIN_PER_IP: '1000',
   RATE_LIMIT_LOGIN_PER_EMAIL: '1000',
+  // Kept apart from the development blobs in .data/blobs.
+  STORAGE_LOCAL_ROOT: '.data/test-blobs',
 });
 
 /** The `Origin` the test app accepts for state-changing requests. */

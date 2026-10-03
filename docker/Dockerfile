@@ -24,8 +24,11 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production \
     PORT=3000 \
-    WEB_DIST_DIR=/app/web
+    WEB_DIST_DIR=/app/web \
+    STORAGE_LOCAL_ROOT=/data/blobs
 WORKDIR /app
+# Mount a volume at /data (Railway Volume) so blobs survive redeploys.
+RUN mkdir -p /data/blobs && chown -R node:node /data
 COPY --from=build --chown=node:node /out/api ./
 COPY --from=build --chown=node:node /app/apps/web/dist ./web
 USER node
