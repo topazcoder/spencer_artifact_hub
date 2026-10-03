@@ -506,9 +506,9 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 2. ✅ Config validated with zod at boot, pino logging with request IDs, error filter and error codes, health endpoint.
 3. ✅ Docker, compose, Postgres with TypeORM and the first migration, then **deploy to Railway** (deploy deferred).
 
-**Auth**
+**Auth** ✅ done
 4. ✅ Signup, login, logout and `me` endpoints, sessions, guard, CSRF Origin check, plus e2e tests.
-5. Login and signup screens, app shell and protected routes.
+5. ✅ Login and signup screens, app shell and protected routes.
 
 **Artifacts**
 6. `StorageDriver` with the local driver, plus unit tests.
