@@ -24,6 +24,7 @@ describe('parseEnv', () => {
       RATE_LIMIT_LOGIN_WINDOW_SECONDS: 900,
       STORAGE_DRIVER: 'local',
       STORAGE_LOCAL_ROOT: '.data/blobs',
+      MAX_ARTIFACT_BYTES: 10_485_760,
     });
   });
 

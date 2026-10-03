@@ -35,6 +35,13 @@ export const envSchema = z
     STORAGE_DRIVER: z.enum(['local', 's3', 'azure']).default('local'),
     /** Root directory of the `local` driver (a mounted volume in production). */
     STORAGE_LOCAL_ROOT: z.string().optional(),
+    /** Largest artifact version accepted, enforced while the upload streams in. 10 MB by default. */
+    MAX_ARTIFACT_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1024 * 1024 * 1024)
+      .default(10 * 1024 * 1024),
   })
   .transform((env, ctx) => {
     if (env.NODE_ENV === 'production') {

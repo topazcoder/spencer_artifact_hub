@@ -197,7 +197,10 @@ interface StorageDriver {
 The web UI and MCP use the same pipeline:
 
 1. **Receive:** multipart with busboy/multer `limits.fileSize = MAX_ARTIFACT_BYTES`, or MCP inline text `content` (byte length checked before processing), or the raw-body `PUT` to an upload session (streamed with the same limit). Anything over the limit gets `413 ARTIFACT_TOO_LARGE`.
-2. **Validate type:** sniff magic bytes (`file-type`) for binary formats; for text formats, check UTF-8 and structure (HTML/SVG/Markdown). Compare against the allowlist: `text/html`, `image/svg+xml`, `image/png`, `image/jpeg`, `image/webp`, `image/gif`, `application/pdf`, `text/markdown`. The **server** decides the MIME type; the client's claim is ignored.
+2. **Validate type:** the allowlist is `text/html`, `image/svg+xml`, `text/markdown`, `image/png`, `image/jpeg`, `image/webp`, `image/gif`, `application/pdf`. The **server** decides the MIME type from the first 64 KB of content; the client's `Content-Type` is ignored.
+   - **Binary formats** come from magic bytes (`file-type`) only. The filename is ignored, and any other detected binary type (zip, executables, …) is rejected.
+   - **Text formats** must be UTF-8 throughout, with no NUL bytes (checked as the content streams). Bytes alone can't tell them apart (any text is valid Markdown, and Markdown may contain HTML), so the **extension picks and the content must match**: `.md`/`.markdown` → Markdown (any text); `.html`/`.htm` → HTML (must start with markup); `.svg` → SVG (must have an `<svg>` root; DOCTYPEs with an internal subset are rejected). MCP passes the format explicitly instead of a filename.
+   - **No or another extension:** only an unmistakable SVG (`<svg>` root) or HTML document (`<!doctype html>` / `<html>`) is accepted; Markdown always needs `.md` or an explicit format, so `.txt`, `.csv`, `.js` etc. are rejected.
 3. **Store blob** under a fresh key, with the hash computed while streaming.
 4. **Idempotency check** (section 10): if this owner already published the same `sha256` (or the target's current version has it), return the existing result.
 5. **DB transaction:** `SELECT … FOR UPDATE` the artifact → insert the version with `latest_version_no + 1` → update `current_version_id`. Commit.
@@ -512,7 +515,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 
 **Artifacts**
 6. ✅ `StorageDriver` with the local driver, plus unit tests.
-7. Content validation (type sniffing, allowlist, streaming size limit), plus unit tests.
+7. ✅ Content validation (type sniffing, allowlist, streaming size limit), plus unit tests.
 8. Create an artifact with v1, get one, list mine. `AccessPolicy` starts as owner-only.
 9. Content endpoint with sandbox headers, and a viewer for each type.
 10. Publish dialog and the gallery's *Mine* tab, without AI.
