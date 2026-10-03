@@ -13,7 +13,8 @@
     "lint": "oxlint apps packages",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "pnpm --filter @artifact-hub/shared build && pnpm -r test"
+    "test": "pnpm --filter @artifact-hub/shared build && pnpm -r test",
+    "test:e2e": "pnpm --filter @artifact-hub/shared build && pnpm --filter @artifact-hub/api test:e2e"
   },
   "devDependencies": {
     "oxlint": "^1.86.0",

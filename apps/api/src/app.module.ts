@@ -1,4 +1,23 @@
-import { Module } from '@nestjs/common';
+import { DynamicModule, Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { LoggerModule } from 'nestjs-pino';
+import { AllExceptionsFilter } from './common/errors/all-exceptions.filter.js';
+import { buildLoggerParams } from './common/logging/logger.config.js';
+import { ConfigModule } from './config/config.module.js';
+import type { Env } from './config/env.js';
+import { HealthModule } from './health/health.module.js';
 
 @Module({})
-export class AppModule {}
+export class AppModule {
+  static register(env: Env): DynamicModule {
+    return {
+      module: AppModule,
+      imports: [
+        ConfigModule.forRoot(env),
+        LoggerModule.forRoot(buildLoggerParams(env)),
+        HealthModule,
+      ],
+      providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
+    };
+  }
+}
