@@ -1,10 +1,19 @@
 import type { Readable } from 'node:stream';
 import type { ContentHint } from '../uploads/content/content.types.js';
+import type { ArtifactVersion } from './artifact-version.entity.js';
 import type { Artifact } from './artifact.entity.js';
 
 /** Content for a new version, from a multipart upload, an upload session or MCP inline text. */
 export interface NewContent extends ContentHint {
   stream: Readable;
+}
+
+/** A version's content, ready to stream once the caller knows it needs the body. */
+export interface ArtifactContent {
+  artifact: Artifact;
+  version: ArtifactVersion;
+  /** Opens the blob. Not called for a 304, so revalidation never touches storage. */
+  open(): Promise<Readable>;
 }
 
 export interface ArtifactListOptions {

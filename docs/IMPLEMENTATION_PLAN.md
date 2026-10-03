@@ -217,9 +217,11 @@ The web UI and MCP use the same pipeline:
 - The content endpoint is `GET /api/artifacts/:id/versions/:no/content`. It is authenticated with the session cookie and passes through `AccessPolicy`.
 - Response headers on every content response:
   - `X-Content-Type-Options: nosniff`
-  - `Content-Security-Policy: sandbox allow-scripts allow-popups; default-src 'self' data: blob: 'unsafe-inline'; …`. Without `allow-same-origin`, the document gets an opaque origin, so its scripts cannot read app cookies or call the API.
+  - `Content-Security-Policy: sandbox allow-scripts allow-popups; default-src 'none'; …`. Without `allow-same-origin`, the document gets an opaque origin, so its scripts cannot read app cookies or call the API, even when the content URL is opened directly. Scripts, styles, fonts, images and media may load from external `https:` URLs (CDNs), so AI-generated HTML renders as intended; `connect-src`, `form-action`, `frame-src` and `base-uri` are `'none'`, and `frame-ancestors 'self'` lets only the app frame it. (Trade-off: viewing such a page can reach third-party hosts.)
   - `Cross-Origin-Resource-Policy: same-origin`, `Referrer-Policy: no-referrer`
-- The SPA renders HTML, SVG and PDF in an `<iframe sandbox="allow-scripts allow-popups">`; images use `<img>`; Markdown is rendered with `react-markdown` (no raw HTML) + sanitize.
+  - `Cache-Control: private, no-cache` with the content hash as `ETag`: revalidation is a 304, but always after the access check, so revoked access takes effect immediately.
+- The SPA renders HTML in an `<iframe sandbox="allow-scripts allow-popups">`; images **and SVG** use `<img>` (an SVG's scripts never run there); Markdown is rendered with `react-markdown` (raw HTML shown as text, no `rehype-raw`; `javascript:` URLs dropped). **PDFs are rendered with pdf.js** to canvases: browsers refuse to show PDFs in their built-in viewer under a CSP sandbox. The Markdown and PDF viewers are lazy-loaded.
+- "Full screen" uses the Fullscreen API on the in-app viewer, rather than opening the raw content URL (where a sandboxed PDF wouldn't render).
 - The CSRF guard rejects state-changing requests with `Origin: null` or a foreign `Origin`.
 - `Download` sets `Content-Disposition: attachment` with a sanitized filename.
 - Later hardening (ENHANCEMENTS.md): serve user content from a separate domain (`usercontent.*`).
@@ -386,7 +388,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | S12 | **Session hijack / fixation** | Random 256-bit session token, hashed in DB, new session on login, httpOnly + Secure + SameSite, sliding expiry, logout deletes the row |
 | S13 | **API token abuse** | Hashed, shown once, revocable, `last_used_at`, prefix for identification, rate limited |
 | S14 | **Comment XSS** | Plain text rendered by React (auto-escaped); links auto-linked with `rel="noopener noreferrer"` |
-| S15 | **Malicious PDFs** | Rendered by the browser's built-in viewer inside the sandboxed iframe; never processed server-side except by the LLM API |
+| S15 | **Malicious PDFs** | Rendered by pdf.js (no PDF JavaScript, no `eval`) in the SPA; the raw response keeps the CSP sandbox; never processed server-side except by the LLM API |
 | S16 | **Secrets in logs / errors** | pino redaction; generic 500 messages; no stack traces in responses |
 | S17 | **LLM cost abuse** | Per-user AI rate limits, input truncation, caching of summaries, `AI_ENABLED` switch |
 | S18 | **SSRF** | No server-side URL fetching features |
@@ -423,6 +425,7 @@ GET    /api/s/:token                              (redeem → artifact id, permi
 GET    /api/upload-sessions/:token                (session cookie; owner only → draft info for the upload page)
 POST   /api/upload-sessions/:token                (multipart from upload page; session cookie; owner only)
 PUT    /api/upload-sessions/:token                (raw body; Bearer API token; owner only; for agents with shell access)
+GET    /api/config                                (public: maxArtifactBytes; features.ai from step 24)
 GET    /api/health
 POST   /mcp
 ```
@@ -518,8 +521,8 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 6. ✅ `StorageDriver` with the local driver, plus unit tests.
 7. ✅ Content validation (type sniffing, allowlist, streaming size limit), plus unit tests.
 8. ✅ Create an artifact with v1, get one, list mine. `AccessPolicy` starts as owner-only.
-9. Content endpoint with sandbox headers, and a viewer for each type.
-10. Publish dialog and the gallery's *Mine* tab, without AI.
+9. ✅ Content endpoint with sandbox headers, and a viewer for each type.
+10. ✅ Publish dialog and the gallery's *Mine* tab, without AI. (`GET /api/config` added early for the size limit; the visibility control waits for step 12, so everything is published private until then.)
 11. New versions, metadata edits, soft delete, and the Versions and Details tabs.
 
 **Access and sharing**

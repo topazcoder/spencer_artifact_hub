@@ -1,4 +1,4 @@
-import { ErrorCode } from '@artifact-hub/shared';
+import { ErrorCode, formatBytes } from '@artifact-hub/shared';
 import { AppError } from '../../common/errors/app-error.js';
 
 /** Counts bytes and fails as soon as the limit is passed, before the rest is read. */
@@ -18,15 +18,8 @@ export class ByteMeter {
   static tooLarge(maxBytes: number): AppError {
     return new AppError(
       ErrorCode.ARTIFACT_TOO_LARGE,
-      `The file is larger than the ${ByteMeter.describeLimit(maxBytes)} limit.`,
+      `The file is larger than the ${formatBytes(maxBytes)} limit.`,
       { maxBytes },
     );
-  }
-
-  /** The limit for people: "10 MB", "1.5 MB" or "500 KB". */
-  private static describeLimit(maxBytes: number): string {
-    const mb = maxBytes / (1024 * 1024);
-    if (mb >= 1) return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
-    return `${Math.ceil(maxBytes / 1024)} KB`;
   }
 }

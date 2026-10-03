@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { FormError, TextField } from '@/components/form-fields.tsx';
 import { Button } from '@/components/ui/button.tsx';
-import { applyServerError } from './apply-server-error.ts';
+import { applyServerError } from '@/lib/forms/apply-server-error.ts';
 import type { LoginFormValues } from './auth.types.ts';
 import { useLogin } from './use-auth.ts';
 

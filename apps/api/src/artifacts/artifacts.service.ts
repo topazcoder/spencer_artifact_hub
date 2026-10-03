@@ -18,9 +18,15 @@ import { ContentInspectorService } from '../uploads/content/content-inspector.se
 import { sanitizeFilename } from '../uploads/content/sanitize-filename.js';
 import { ArtifactVersion } from './artifact-version.entity.js';
 import { Artifact } from './artifact.entity.js';
-import type { ArtifactListOptions, ArtifactPage, NewContent } from './artifacts.types.js';
+import type {
+  ArtifactContent,
+  ArtifactListOptions,
+  ArtifactPage,
+  NewContent,
+} from './artifacts.types.js';
 
 const idSchema = z.guid();
+const VERSION_NO = /^[1-9]\d{0,8}$/;
 
 /** Artifacts and their versions. Every method takes the `Actor` and checks `AccessPolicy`. */
 @Injectable()
@@ -28,6 +34,7 @@ export class ArtifactsService {
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(Artifact) private readonly artifacts: Repository<Artifact>,
+    @InjectRepository(ArtifactVersion) private readonly versions: Repository<ArtifactVersion>,
     private readonly inspector: ContentInspectorService,
     @InjectStorage() private readonly storage: StorageDriver,
     private readonly access: AccessPolicyService,
@@ -109,6 +116,19 @@ export class ArtifactsService {
     if (!artifact) throw new AppError(ErrorCode.NOT_FOUND, ARTIFACT_NOT_FOUND_MESSAGE);
     this.access.assertCan(actor, 'view', artifact);
     return artifact;
+  }
+
+  /**
+   * The content of version `versionNo` (as given in the URL). `NOT_FOUND` if the artifact is
+   * not visible to the actor or has no such version.
+   */
+  async getContent(actor: Actor, id: string, versionNo: string): Promise<ArtifactContent> {
+    const artifact = await this.get(actor, id);
+    const version = VERSION_NO.test(versionNo)
+      ? await this.versions.findOneBy({ artifactId: artifact.id, versionNo: Number(versionNo) })
+      : null;
+    if (!version) throw new AppError(ErrorCode.NOT_FOUND, 'Version not found.');
+    return { artifact, version, open: () => this.storage.getStream(version.storageKey) };
   }
 
   /**

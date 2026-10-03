@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { FormError, TextField } from '@/components/form-fields.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { isApiError } from '@/lib/api/api-error.ts';
-import { applyServerError } from './apply-server-error.ts';
+import { applyServerError } from '@/lib/forms/apply-server-error.ts';
 import type { SignupFormValues } from './auth.types.ts';
 import { useSignup } from './use-auth.ts';
 

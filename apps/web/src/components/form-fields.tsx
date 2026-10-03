@@ -1,40 +1,86 @@
-import { type ComponentProps, useId } from 'react';
+import { type ComponentProps, type ReactNode, useId } from 'react';
 import { Input } from '@/components/ui/input.tsx';
 import { Label } from '@/components/ui/label.tsx';
+import { Textarea } from '@/components/ui/textarea.tsx';
 
-interface TextFieldProps extends ComponentProps<typeof Input> {
+interface FieldProps {
   label: string;
   hint?: string;
   error?: string;
 }
 
-/** A labelled input with an optional hint and an error message wired up for screen readers. */
-export function TextField({ label, hint, error, id, ...inputProps }: TextFieldProps) {
+/** Ids and ARIA props that tie a control to its hint and error message. */
+function useFieldIds(id: string | undefined, { hint, error }: FieldProps) {
   const generatedId = useId();
-  const inputId = id ?? generatedId;
-  const hintId = `${inputId}-hint`;
-  const errorId = `${inputId}-error`;
+  const controlId = id ?? generatedId;
+  const hintId = `${controlId}-hint`;
+  const errorId = `${controlId}-error`;
   const describedBy = [error ? errorId : null, hint ? hintId : null].filter(Boolean).join(' ');
+  return {
+    controlId,
+    hintId,
+    errorId,
+    controlProps: {
+      id: controlId,
+      'aria-invalid': error ? true : undefined,
+      'aria-describedby': describedBy || undefined,
+    },
+  };
+}
 
+function Field({
+  label,
+  hint,
+  error,
+  ids,
+  children,
+}: FieldProps & { ids: ReturnType<typeof useFieldIds>; children: ReactNode }) {
   return (
     <div className="grid gap-2">
-      <Label htmlFor={inputId}>{label}</Label>
-      <Input
-        id={inputId}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy || undefined}
-        {...inputProps}
-      />
+      <Label htmlFor={ids.controlId}>{label}</Label>
+      {children}
       {error ? (
-        <p id={errorId} className="text-sm text-destructive">
+        <p id={ids.errorId} className="text-sm text-destructive">
           {error}
         </p>
       ) : hint ? (
-        <p id={hintId} className="text-sm text-muted-foreground">
+        <p id={ids.hintId} className="text-sm text-muted-foreground">
           {hint}
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** A labelled input with an optional hint and an error message wired up for screen readers. */
+export function TextField({
+  label,
+  hint,
+  error,
+  id,
+  ...inputProps
+}: FieldProps & ComponentProps<typeof Input>) {
+  const ids = useFieldIds(id, { label, hint, error });
+  return (
+    <Field label={label} hint={hint} error={error} ids={ids}>
+      <Input {...ids.controlProps} {...inputProps} />
+    </Field>
+  );
+}
+
+/** `TextField` for multi-line text. */
+export function TextAreaField({
+  label,
+  hint,
+  error,
+  id,
+  ...textareaProps
+}: FieldProps & ComponentProps<typeof Textarea>) {
+  const ids = useFieldIds(id, { label, hint, error });
+  return (
+    <Field label={label} hint={hint} error={error} ids={ids}>
+      <Textarea {...ids.controlProps} {...textareaProps} />
+    </Field>
   );
 }
 

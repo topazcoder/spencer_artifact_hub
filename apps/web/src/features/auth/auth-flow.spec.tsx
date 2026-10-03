@@ -2,7 +2,7 @@
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { installFakeAuthApi } from '@/test/fake-auth-api.ts';
+import { installFakeApi } from '@/test/fake-api.ts';
 import { renderApp } from '@/test/render-app.tsx';
 import { currentUserQueryKey } from './auth-api.ts';
 
@@ -25,10 +25,10 @@ async function fillSignup(name: string, email: string, password: string) {
 }
 
 describe('auth flow', () => {
-  let api: ReturnType<typeof installFakeAuthApi>;
+  let api: ReturnType<typeof installFakeApi>;
 
   beforeEach(() => {
-    api = installFakeAuthApi();
+    api = installFakeApi();
   });
 
   afterEach(() => {
@@ -54,7 +54,7 @@ describe('auth flow', () => {
     it('render the app shell for signed-in users', async () => {
       api.signIn(api.addAccount(EMAIL, PASSWORD));
       renderApp('/');
-      expect(await screen.findByRole('heading', { name: 'Welcome, Ada Lovelace' })).toBeTruthy();
+      expect(await screen.findByRole('heading', { name: 'My artifacts' })).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Account menu' }).textContent).toContain('AL');
     });
 
@@ -77,7 +77,7 @@ describe('auth flow', () => {
       api.addAccount(EMAIL, PASSWORD);
       const app = renderApp('/login?next=//evil.test/phish');
       await fillLogin(EMAIL, PASSWORD);
-      await screen.findByRole('heading', { name: 'Welcome, Ada Lovelace' });
+      await screen.findByRole('heading', { name: 'My artifacts' });
       expect(app.location()).toBe('/');
     });
 
@@ -99,7 +99,7 @@ describe('auth flow', () => {
     it('redirects signed-in users away from the login page', async () => {
       api.signIn(api.addAccount(EMAIL, PASSWORD));
       const app = renderApp('/login');
-      await screen.findByRole('heading', { name: 'Welcome, Ada Lovelace' });
+      await screen.findByRole('heading', { name: 'My artifacts' });
       expect(app.location()).toBe('/');
     });
   });
@@ -108,7 +108,8 @@ describe('auth flow', () => {
     it('creates the account and signs in', async () => {
       renderApp('/signup');
       await fillSignup('Grace Hopper', ' Grace@Example.com ', PASSWORD);
-      expect(await screen.findByRole('heading', { name: 'Welcome, Grace Hopper' })).toBeTruthy();
+      expect(await screen.findByRole('heading', { name: 'My artifacts' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Account menu' }).textContent).toContain('GH');
       // The shared schema normalized the email before it was sent.
       const [, init] = api.fetchMock.mock.calls.find(([url]) => url === '/api/auth/signup')!;
       expect(JSON.parse(String(init?.body)).email).toBe('grace@example.com');
@@ -144,7 +145,7 @@ describe('auth flow', () => {
     it('sends the user to login when any request reports an expired session', async () => {
       api.signIn(api.addAccount(EMAIL, PASSWORD));
       const app = renderApp('/');
-      await screen.findByRole('heading', { name: 'Welcome, Ada Lovelace' });
+      await screen.findByRole('heading', { name: 'My artifacts' });
 
       api.expireSession();
       await app.queryClient.invalidateQueries({ queryKey: currentUserQueryKey });

@@ -21,7 +21,7 @@ describe('ByteMeter', () => {
     [10 * 1024 * 1024, '10 MB'],
     [1.5 * 1024 * 1024, '1.5 MB'],
     [500 * 1024, '500 KB'],
-    [100, '1 KB'],
+    [100, '100 B'],
   ])('describes a %d-byte limit as %s', (maxBytes, label) => {
     expect(() => new ByteMeter(maxBytes).add(Buffer.alloc(maxBytes + 1))).toThrow(
       `The file is larger than the ${label} limit.`,

@@ -1,11 +1,12 @@
 import { Controller, Get, type INestApplication, Post } from '@nestjs/common';
-import { apiErrorBodySchema, ErrorCode } from '@artifact-hub/shared';
+import { apiErrorBodySchema, appConfigSchema, ErrorCode } from '@artifact-hub/shared';
 import request from 'supertest';
 import { z } from 'zod';
 import { Public } from '../src/auth/auth.decorators.js';
 import { AppError } from '../src/common/errors/app-error.js';
 import { GENERIC_ERROR_MESSAGE } from '../src/common/errors/error-response.js';
 import { createTestApp } from './create-test-app.js';
+import { testEnv } from './test-env.js';
 
 @Public()
 @Controller('test-errors')
@@ -66,6 +67,15 @@ describe('App (e2e)', () => {
         .set('X-Request-Id', 'client-trace-42')
         .expect(200);
       expect(res.headers['x-request-id']).toBe('client-trace-42');
+    });
+  });
+
+  describe('GET /api/config', () => {
+    it('returns the client configuration without a session', async () => {
+      const res = await request(app.getHttpServer()).get('/api/config').expect(200);
+      expect(appConfigSchema.parse(res.body)).toEqual({
+        maxArtifactBytes: testEnv.MAX_ARTIFACT_BYTES,
+      });
     });
   });
 

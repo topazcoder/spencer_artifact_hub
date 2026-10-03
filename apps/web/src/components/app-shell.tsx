@@ -1,5 +1,8 @@
 import { APP_NAME } from '@artifact-hub/shared';
+import { PlusIcon } from 'lucide-react';
 import { Link, Outlet } from 'react-router';
+import { Button } from '@/components/ui/button.tsx';
+import { PublishDialog } from '@/features/artifacts/publish-dialog.tsx';
 import { useCurrentUser } from '@/features/auth/use-auth.ts';
 import { UserMenu } from './user-menu.tsx';
 
@@ -14,7 +17,15 @@ export function AppShell() {
           <Link to="/" className="font-semibold tracking-tight">
             {APP_NAME}
           </Link>
-          {user ? <UserMenu user={user} /> : null}
+          <div className="flex items-center gap-2">
+            <PublishDialog>
+              <Button size="sm">
+                <PlusIcon aria-hidden="true" />
+                Publish
+              </Button>
+            </PublishDialog>
+            {user ? <UserMenu user={user} /> : null}
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">

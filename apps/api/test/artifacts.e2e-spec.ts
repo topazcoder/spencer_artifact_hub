@@ -11,6 +11,7 @@ import {
 import request, { type Response } from 'supertest';
 import { DataSource } from 'typeorm';
 import { ArtifactsService } from '../src/artifacts/artifacts.service.js';
+import { CONTENT_SECURITY_POLICY } from '../src/artifacts/content/content-headers.js';
 import { STORAGE_DRIVER } from '../src/storage/storage.module.js';
 import type { StorageDriver } from '../src/storage/storage.types.js';
 import { createTestApp } from './create-test-app.js';
@@ -75,6 +76,19 @@ describe('Artifacts (e2e)', () => {
 
   function list(user: TestUser, query: Record<string, string | number> = {}) {
     return http().get('/api/artifacts').query(query).set('Cookie', user.cookie);
+  }
+
+  /** Reads the response as raw bytes (`res.body` is a Buffer), whatever its type. */
+  function content(user: TestUser | null, id: string, versionNo: string | number = 1) {
+    const req = http()
+      .get(`/api/artifacts/${id}/versions/${versionNo}/content`)
+      .buffer(true)
+      .parse((res, callback) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => callback(null, Buffer.concat(chunks)));
+      });
+    return user ? req.set('Cookie', user.cookie) : req;
   }
 
   async function listPage(user: TestUser, query: Record<string, number> = {}) {
@@ -298,6 +312,74 @@ describe('Artifacts (e2e)', () => {
 
     it('answers 404 for malformed ids', async () => {
       expect(errorOf(await get(ada, 'not-a-uuid').expect(404)).code).toBe(ErrorCode.NOT_FOUND);
+    });
+  });
+
+  describe('GET /api/artifacts/:id/versions/:no/content', () => {
+    let htmlId: string;
+    let pngId: string;
+
+    beforeAll(async () => {
+      const html = await publish(ada, fixtures.html, 'Pricing page.html').expect(201);
+      htmlId = artifactResponseSchema.parse(html.body).artifact.id;
+      const png = await publish(ada, fixtures.png, 'chart.png').expect(201);
+      pngId = artifactResponseSchema.parse(png.body).artifact.id;
+    });
+
+    it('streams the exact bytes with the sandbox headers', async () => {
+      const res = await content(ada, htmlId).expect(200);
+
+      expect((res.body as Buffer).equals(fixtures.html)).toBe(true);
+      expect(res.headers).toMatchObject({
+        'content-type': 'text/html; charset=utf-8',
+        'content-length': String(fixtures.html.length),
+        'content-disposition': 'inline',
+        'content-security-policy': CONTENT_SECURITY_POLICY,
+        'x-content-type-options': 'nosniff',
+        'cross-origin-resource-policy': 'same-origin',
+        'referrer-policy': 'no-referrer',
+        'cache-control': 'private, no-cache',
+        etag: `"${createHash('sha256').update(fixtures.html).digest('hex')}"`,
+      });
+    });
+
+    it('serves binary types without a charset', async () => {
+      const res = await content(ada, pngId).expect(200);
+      expect(res.headers['content-type']).toBe('image/png');
+      expect((res.body as Buffer).equals(fixtures.png)).toBe(true);
+    });
+
+    it('answers 304 when the ETag matches, still checking access first', async () => {
+      const { headers } = await content(ada, htmlId).expect(200);
+      const revalidated = await content(ada, htmlId)
+        .set('If-None-Match', headers.etag as string)
+        .expect(304);
+      expect((revalidated.body as Buffer).length).toBe(0);
+      expect(revalidated.headers['content-security-policy']).toBe(CONTENT_SECURITY_POLICY);
+
+      await content(bob, htmlId)
+        .set('If-None-Match', headers.etag as string)
+        .expect(404);
+    });
+
+    it('sends a download with a safe filename', async () => {
+      const res = await content(ada, htmlId).query({ download: '1' }).expect(200);
+      expect(res.headers['content-disposition']).toBe(
+        `attachment; filename="Pricing page.html"; filename*=UTF-8''Pricing%20page.html`,
+      );
+    });
+
+    it('answers 404 to other users and for missing versions', async () => {
+      await content(bob, htmlId).expect(404);
+      for (const versionNo of [2, 0, '01', 'latest', '1e3']) {
+        const res = await content(ada, htmlId, versionNo).expect(404);
+        const body: unknown = JSON.parse((res.body as Buffer).toString());
+        expect(apiErrorBodySchema.parse(body).error.code).toBe(ErrorCode.NOT_FOUND);
+      }
+    });
+
+    it('requires a session', async () => {
+      await content(null, htmlId).expect(401);
     });
   });
 

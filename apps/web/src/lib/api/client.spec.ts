@@ -2,7 +2,7 @@ import { ErrorCode } from '@artifact-hub/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ApiError } from './api-error.ts';
-import { apiRequest } from './client.ts';
+import { apiFetchContent, apiRequest } from './client.ts';
 
 function stubFetch(response: Response | Error) {
   const fetchMock = vi.fn(async () => {
@@ -96,5 +96,45 @@ describe('apiRequest', () => {
     const error = await catchError(apiRequest('/auth/me'));
     expect(error).toMatchObject({ status: 502, code: ErrorCode.INTERNAL_ERROR });
     expect(error.isTransient).toBe(true);
+  });
+});
+
+describe('apiRequest with FormData', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends the form as is, letting the browser set the multipart Content-Type', async () => {
+    const fetchMock = stubFetch(json(201, { ok: true }));
+    const form = new FormData();
+    form.append('metadata', '{}');
+    await apiRequest('/artifacts', { method: 'POST', body: form });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/artifacts',
+      expect.objectContaining({ body: form, headers: { Accept: 'application/json' } }),
+    );
+  });
+});
+
+describe('apiFetchContent', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the raw response from /api with the session cookie', async () => {
+    const fetchMock = stubFetch(new Response('# Notes', { status: 200 }));
+    const res = await apiFetchContent('/artifacts/a/versions/1/content');
+    expect(await res.text()).toBe('# Notes');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/artifacts/a/versions/1/content',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    );
+  });
+
+  it('throws ApiError for error responses', async () => {
+    stubFetch(json(404, { error: { code: ErrorCode.NOT_FOUND, message: 'Version not found.' } }));
+    const error = await catchError(apiFetchContent('/artifacts/a/versions/9/content'));
+    expect(error).toMatchObject({ status: 404, code: ErrorCode.NOT_FOUND });
   });
 });
