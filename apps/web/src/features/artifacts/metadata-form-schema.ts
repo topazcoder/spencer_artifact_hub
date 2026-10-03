@@ -8,6 +8,7 @@ import { z } from 'zod';
 export const metadataFormSchema = z.object({
   title: createArtifactRequestSchema.shape.title,
   description: createArtifactRequestSchema.shape.description,
+  visibility: createArtifactRequestSchema.shape.visibility,
   tags: z.string().transform((value, ctx) => {
     const tags = value
       .split(',')

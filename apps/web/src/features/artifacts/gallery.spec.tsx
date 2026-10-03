@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeApi } from '@/test/fake-api.ts';
 import { renderApp } from '@/test/render-app.tsx';
 
-describe('gallery (My artifacts)', () => {
+describe('gallery', () => {
   let api: ReturnType<typeof installFakeApi>;
   let me: Artifact['owner'];
 
@@ -22,15 +22,22 @@ describe('gallery (My artifacts)', () => {
     vi.unstubAllGlobals();
   });
 
+  const bob = { id: crypto.randomUUID(), displayName: 'Bob' };
+
   /** An artifact updated `minutesAgo` minutes ago. */
-  function artifact(title: string, minutesAgo: number, owner = me): Artifact {
+  function artifact(
+    title: string,
+    minutesAgo: number,
+    owner = me,
+    visibility: Artifact['visibility'] = 'private',
+  ): Artifact {
     const updatedAt = new Date(Date.now() - minutesAgo * 60_000).toISOString();
     return {
       id: crypto.randomUUID(),
       title,
       description: '',
       tags: ['alpha', 'beta', 'gamma', 'delta'],
-      visibility: 'private',
+      visibility,
       status: 'published',
       metadataSource: 'user',
       owner,
@@ -93,6 +100,54 @@ describe('gallery (My artifacts)', () => {
     api.addArtifact(artifact('Only', 1));
     renderApp('/?page=abc');
     expect(await screen.findByRole('heading', { name: 'Only', level: 2 })).toBeTruthy();
+    expect(api.calls('GET /api/artifacts?scope=mine&page=1&pageSize=24')).toBe(1);
+  });
+
+  it('switches to every public artifact, mine included, and back', async () => {
+    api.addArtifact(artifact('My private', 1));
+    api.addArtifact(artifact('My public', 2, me, 'public'));
+    api.addArtifact(artifact("Bob's public", 3, bob, 'public'));
+    api.addArtifact(artifact("Bob's private", 4, bob));
+    const user = userEvent.setup();
+    const app = renderApp('/');
+
+    expect(await screen.findByRole('heading', { name: 'My artifacts', level: 1 })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Mine' }).getAttribute('aria-current')).toBe('page');
+
+    await user.click(screen.getByRole('link', { name: 'All public' }));
+    expect(app.location()).toBe('/?scope=public');
+    expect(await screen.findByRole('heading', { name: 'Public artifacts', level: 1 })).toBeTruthy();
+    expect(await screen.findByText('2 artifacts')).toBeTruthy();
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+      'My public',
+      "Bob's public",
+    ]);
+    expect(screen.getByRole('link', { name: 'All public' }).getAttribute('aria-current')).toBe(
+      'page',
+    );
+
+    await user.click(screen.getByRole('link', { name: 'Mine' }));
+    expect(app.location()).toBe('/');
+  });
+
+  it('keeps the scope when paging', async () => {
+    for (let i = 1; i <= 25; i++) api.addArtifact(artifact(`Public ${i}`, i, bob, 'public'));
+    renderApp('/?scope=public');
+    expect(await screen.findByText('Page 1 of 2')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Next page' }).getAttribute('href')).toBe(
+      '/?scope=public&page=2',
+    );
+  });
+
+  it('explains an empty public gallery', async () => {
+    api.addArtifact(artifact('My private', 1));
+    renderApp('/?scope=public');
+    expect(await screen.findByRole('heading', { name: 'No public artifacts yet' })).toBeTruthy();
+  });
+
+  it('treats an unknown scope as mine', async () => {
+    renderApp('/?scope=everything');
+    expect(await screen.findByRole('heading', { name: 'My artifacts', level: 1 })).toBeTruthy();
     expect(api.calls('GET /api/artifacts?scope=mine&page=1&pageSize=24')).toBe(1);
   });
 });

@@ -84,7 +84,7 @@ export function installFakeApi() {
       title: metadata.title,
       description: metadata.description ?? '',
       tags: metadata.tags ?? [],
-      visibility: 'private',
+      visibility: metadata.visibility ?? 'private',
       status: 'published',
       metadataSource: 'user',
       owner: { id: signedIn!.id, displayName: signedIn!.displayName },
@@ -121,15 +121,18 @@ export function installFakeApi() {
     return json(201, { artifact: stored.artifact });
   };
 
-  const listMine = (query: URLSearchParams): Response => {
+  const listArtifacts = (query: URLSearchParams): Response => {
+    const scope = query.get('scope') ?? 'mine';
     const page = Number(query.get('page') ?? 1);
     const pageSize = Number(query.get('pageSize') ?? 24);
-    const mine = [...artifacts.values()]
+    const matching = [...artifacts.values()]
       .map(({ artifact }) => artifact)
-      .filter((artifact) => artifact.owner.id === signedIn?.id)
+      .filter((artifact) =>
+        scope === 'public' ? artifact.visibility === 'public' : artifact.owner.id === signedIn?.id,
+      )
       .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    const items = mine.slice((page - 1) * pageSize, page * pageSize);
-    return json(200, { items, page, pageSize, total: mine.length });
+    const items = matching.slice((page - 1) * pageSize, page * pageSize);
+    return json(200, { items, page, pageSize, total: matching.length });
   };
 
   const fetchMock = vi.fn(async (input: string, init: RequestInit = {}) => {
@@ -140,7 +143,7 @@ export function installFakeApi() {
     const listMatch = LIST_ROUTE.exec(route);
     if (listMatch) {
       if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
-      return listMine(new URLSearchParams(listMatch[1]));
+      return listArtifacts(new URLSearchParams(listMatch[1]));
     }
     if (route === 'POST /api/artifacts' && init.body instanceof FormData) {
       if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');

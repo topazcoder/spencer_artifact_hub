@@ -1,16 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import { ErrorCode } from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import type { ObjectLiteral, SelectQueryBuilder } from 'typeorm';
+import { Brackets, type ObjectLiteral, type SelectQueryBuilder } from 'typeorm';
 import type { Actor } from '../auth/auth.types.js';
 import { AppError } from '../common/errors/app-error.js';
 import type { AccessAction, AccessTarget, DenialReason } from './access.types.js';
 
 export const ARTIFACT_NOT_FOUND_MESSAGE = 'Artifact not found.';
 
+/** Actions only the owner may take, whatever else grants access. */
+const OWNER_ONLY_ACTIONS: ReadonlySet<AccessAction> = new Set(['edit', 'share', 'delete']);
+
 /**
  * The only place that decides who may do what with an artifact (plan §4). REST and MCP both go
- * through it. Owner-only for now; public visibility and shares extend it in steps 12–14.
+ * through it.
+ *
+ * - The owner may do everything, drafts included.
+ * - Anyone may view and comment on a published `public` artifact.
+ * - Nobody else gets anything (shares extend this in steps 13–14). Deleted artifacts are gone
+ *   for everyone.
  */
 @Injectable()
 export class AccessPolicyService {
@@ -50,16 +58,25 @@ export class AccessPolicyService {
   ): SelectQueryBuilder<T> {
     return qb
       .andWhere(`${alias}.deletedAt IS NULL`)
-      .andWhere(`${alias}.ownerId = :accessViewerId`, { accessViewerId: actor.userId });
+      .andWhere(
+        new Brackets((visible) =>
+          visible
+            .where(`${alias}.ownerId = :accessViewerId`, { accessViewerId: actor.userId })
+            .orWhere(`(${alias}.visibility = 'public' AND ${alias}.status = 'published')`),
+        ),
+      );
   }
 
   private denialReason(
     actor: Actor,
-    _action: AccessAction,
+    action: AccessAction,
     artifact: AccessTarget,
   ): DenialReason | null {
     if (artifact.deletedAt) return 'deleted';
-    if (artifact.ownerId !== actor.userId) return 'not_owner';
+    if (artifact.ownerId === actor.userId) return null;
+    if (artifact.status !== 'published') return 'draft';
+    if (artifact.visibility !== 'public') return 'private';
+    if (OWNER_ONLY_ACTIONS.has(action)) return 'owner_only';
     return null;
   }
 }

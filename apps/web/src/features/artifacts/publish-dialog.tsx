@@ -25,6 +25,7 @@ import { fileProblem } from './file-checks.ts';
 import { FileDropZone } from './file-drop-zone.tsx';
 import { metadataFormSchema } from './metadata-form-schema.ts';
 import { usePublishArtifact } from './use-artifacts.ts';
+import { VisibilityField } from './visibility-field.tsx';
 
 /** Opens the publish dialog from `children` (the trigger button). */
 export function PublishDialog({ children }: { children: ReactNode }) {
@@ -48,11 +49,12 @@ export function PublishDialog({ children }: { children: ReactNode }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent>
+      {/* Header and buttons stay put; the fields scroll between them. */}
+      <DialogContent className="flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Publish an artifact</DialogTitle>
           <DialogDescription>
-            Only you can see it until you share it or make it public.
+            Choose who can see it. You can change this, or share it, later.
           </DialogDescription>
         </DialogHeader>
         <PublishForm
@@ -83,7 +85,7 @@ function PublishForm({
     formState: { errors, isSubmitting },
   } = useForm<MetadataFormValues, unknown, MetadataFormOutput>({
     resolver: zodResolver(metadataFormSchema),
-    defaultValues: { title: '', description: '', tags: '' },
+    defaultValues: { title: '', description: '', tags: '', visibility: 'private' },
   });
 
   const chooseFile = (chosen: File) => {
@@ -109,41 +111,45 @@ function PublishForm({
         setFileError(error.message);
         return;
       }
-      applyServerError(error, setError, ['title', 'description', 'tags']);
+      applyServerError(error, setError, ['title', 'description', 'tags', 'visibility']);
     }
   });
 
   return (
     <form
       noValidate
-      className="grid gap-4"
+      className="flex min-h-0 flex-col gap-4"
       onSubmit={(event) => {
         // Report a missing file together with any field errors.
         if (!file) setFileError('Choose a file to publish.');
         void submit(event);
       }}
     >
-      <FormError message={errors.root?.server?.message} />
-      <FileDropZone
-        file={file}
-        onFileChange={chooseFile}
-        maxBytes={config?.maxArtifactBytes}
-        error={fileError}
-        disabled={isSubmitting}
-      />
-      <TextField label="Title" error={errors.title?.message} {...register('title')} />
-      <TextAreaField
-        label="Description"
-        rows={3}
-        error={errors.description?.message}
-        {...register('description')}
-      />
-      <TextField
-        label="Tags"
-        hint="Separate tags with commas, e.g. marketing, q3"
-        error={errors.tags?.message}
-        {...register('tags')}
-      />
+      {/* Padding inside, negative margin outside: focus rings aren't clipped by the scroll. */}
+      <div className="-m-1 grid min-h-0 gap-4 overflow-y-auto p-1">
+        <FormError message={errors.root?.server?.message} />
+        <FileDropZone
+          file={file}
+          onFileChange={chooseFile}
+          maxBytes={config?.maxArtifactBytes}
+          error={fileError}
+          disabled={isSubmitting}
+        />
+        <TextField label="Title" error={errors.title?.message} {...register('title')} />
+        <TextAreaField
+          label="Description"
+          rows={3}
+          error={errors.description?.message}
+          {...register('description')}
+        />
+        <TextField
+          label="Tags"
+          hint="Separate tags with commas, e.g. marketing, q3"
+          error={errors.tags?.message}
+          {...register('tags')}
+        />
+        <VisibilityField disabled={isSubmitting} {...register('visibility')} />
+      </div>
       <DialogFooter>
         <DialogClose asChild>
           <Button type="button" variant="outline" disabled={isSubmitting}>

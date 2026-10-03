@@ -8,7 +8,12 @@ describe('metadataFormSchema', () => {
       description: '',
       tags: 'Marketing, q3,, marketing ',
     });
-    expect(result).toEqual({ title: 'Pricing', description: '', tags: ['marketing', 'q3'] });
+    expect(result).toEqual({
+      title: 'Pricing',
+      description: '',
+      tags: ['marketing', 'q3'],
+      visibility: 'private',
+    });
   });
 
   it('reports tag problems on the tags field itself', () => {

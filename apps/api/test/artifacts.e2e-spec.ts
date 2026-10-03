@@ -128,6 +128,15 @@ describe('Artifacts (e2e)', () => {
     return user ? req.set('Cookie', user.cookie) : req;
   }
 
+  /** My artifact ids in `scope=public`, in order (other suites share the database). */
+  async function publicIds(user: TestUser, among: string[]): Promise<string[]> {
+    const res = await list(user, { scope: 'public', pageSize: 50 }).expect(200);
+    return artifactListResponseSchema
+      .parse(res.body)
+      .items.map((item) => item.id)
+      .filter((id) => among.includes(id));
+  }
+
   async function listPage(user: TestUser, query: Record<string, number> = {}) {
     return artifactListResponseSchema.parse((await list(user, query).expect(200)).body);
   }
@@ -606,6 +615,88 @@ describe('Artifacts (e2e)', () => {
     });
   });
 
+  describe('public visibility', () => {
+    let dave: TestUser;
+
+    beforeAll(async () => {
+      dave = await users.create('Dave');
+    });
+
+    it('lets any user view a public artifact, its versions and content', async () => {
+      const id = await publishedId(ada, { ...METADATA, visibility: 'public' });
+      expect(
+        artifactResponseSchema.parse((await get(bob, id).expect(200)).body).artifact,
+      ).toMatchObject({ id, visibility: 'public', owner: { id: ada.id } });
+      await http().get(`/api/artifacts/${id}/versions`).set('Cookie', bob.cookie).expect(200);
+      expect((await content(bob, id).expect(200)).body).toEqual(fixtures.markdown);
+    });
+
+    it('keeps editing, new versions and deleting to the owner, with 403', async () => {
+      const id = await publishedId(ada, { ...METADATA, visibility: 'public' });
+      const before = await blobFiles();
+
+      expect(errorOf(await patch(bob, id, { title: 'Mine now' }).expect(403)).code).toBe(
+        ErrorCode.FORBIDDEN,
+      );
+      await publishVersion(bob, id, fixtures.svg, 'logo.svg').expect(403);
+      await remove(bob, id).expect(403);
+
+      expect(await blobFiles()).toEqual(before);
+      expect(artifactResponseSchema.parse((await get(ada, id)).body).artifact).toMatchObject({
+        title: METADATA.title,
+        latestVersionNo: 1,
+      });
+    });
+
+    it('lists public artifacts from everyone, newest first, and never private ones', async () => {
+      const first = await publishedId(ada, { title: 'Public 1', visibility: 'public' });
+      const hidden = await publishedId(ada, { title: 'Private' });
+      const second = await publishedId(dave, { title: 'Public 2', visibility: 'public' });
+      const ids = [first, hidden, second];
+
+      expect(await publicIds(bob, ids)).toEqual([second, first]);
+      expect(await publicIds(dave, ids)).toEqual([second, first]);
+    });
+
+    it('follows visibility changes at once', async () => {
+      const id = await publishedId(ada);
+      await get(bob, id).expect(404);
+
+      await patch(ada, id, { visibility: 'public' }).expect(200);
+      await get(bob, id).expect(200);
+      expect(await publicIds(bob, [id])).toEqual([id]);
+
+      await patch(ada, id, { visibility: 'private' }).expect(200);
+      await get(bob, id).expect(404);
+      await content(bob, id).expect(404);
+      expect(await publicIds(bob, [id])).toEqual([]);
+    });
+
+    it('hides deleted public artifacts', async () => {
+      const id = await publishedId(ada, { ...METADATA, visibility: 'public' });
+      await remove(ada, id).expect(204);
+      await get(bob, id).expect(404);
+      expect(await publicIds(bob, [id])).toEqual([]);
+    });
+
+    it('hides public drafts from everyone but their owner', async () => {
+      const id = randomUUID();
+      await app.get(DataSource).query(
+        `INSERT INTO artifacts (id, owner_id, title, visibility, status)
+         VALUES ($1, $2, 'Draft', 'public', 'draft')`,
+        [id, ada.id],
+      );
+      await get(ada, id).expect(200);
+      await get(bob, id).expect(404);
+      expect(await publicIds(bob, [id])).toEqual([]);
+    });
+
+    it('rejects an unknown scope', async () => {
+      const res = await list(bob, { scope: 'everything' }).expect(400);
+      expect(errorOf(res).code).toBe(ErrorCode.VALIDATION_FAILED);
+    });
+  });
+
   describe('GET /api/artifacts (mine)', () => {
     let carol: TestUser;
     const titles = ['First', 'Second', 'Third'];
@@ -641,11 +732,11 @@ describe('Artifacts (e2e)', () => {
       expect(page.items).toEqual([]);
     });
 
-    it("returns nothing when filtering by another user's id", async () => {
+    it("returns nothing when filtering by another user's id and they have nothing public", async () => {
       const service = app.get(ArtifactsService);
       const asCarol = await service.list(
         { userId: carol.id, via: 'web' },
-        { page: 1, pageSize: 10 },
+        { ownerId: carol.id, page: 1, pageSize: 10 },
       );
       expect(asCarol.items).toHaveLength(titles.length);
 

@@ -171,9 +171,13 @@ export const ARTIFACT_LIST_MAX_PAGE_SIZE = 50;
 /** Caps the OFFSET a client can make the database skip. */
 export const ARTIFACT_LIST_MAX_PAGE = 1000;
 
-/** Query of `GET /api/artifacts`. Only `mine` for now; `public` and `shared` come with sharing. */
+/** `mine`: published by me. `public`: every public artifact, mine included. */
+export const ARTIFACT_LIST_SCOPES = ['mine', 'public'] as const;
+export type ArtifactListScope = (typeof ARTIFACT_LIST_SCOPES)[number];
+
+/** Query of `GET /api/artifacts`. `shared` joins the scopes with sharing (step 14). */
 export const artifactListQuerySchema = z.object({
-  scope: z.enum(['mine']).default('mine'),
+  scope: z.enum(ARTIFACT_LIST_SCOPES).default('mine'),
   /** 1-based. */
   page: z.coerce.number().int().min(1).max(ARTIFACT_LIST_MAX_PAGE).default(1),
   pageSize: z.coerce

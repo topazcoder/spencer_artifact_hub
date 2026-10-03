@@ -1,8 +1,9 @@
+import type { ArtifactListScope } from '@artifact-hub/shared';
 import type { z } from 'zod';
 import type { metadataFormSchema } from './metadata-form-schema.ts';
 
 export interface ArtifactListParams {
-  scope: 'mine';
+  scope: ArtifactListScope;
   /** 1-based. */
   page: number;
   pageSize: number;

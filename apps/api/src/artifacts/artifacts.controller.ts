@@ -108,10 +108,9 @@ export class ArtifactsController {
     @CurrentActor() actor: Actor,
     @Query(new ZodValidationPipe(artifactListQuerySchema)) query: ArtifactListQuery,
   ): Promise<ArtifactListResponse> {
-    // `scope=mine` is the only scope until public visibility and shares (steps 12–14).
-    const { page, pageSize } = query;
+    const { scope, page, pageSize } = query;
     const { items, total } = await this.artifacts.list(actor, {
-      ownerId: actor.userId,
+      ...(scope === 'mine' ? { ownerId: actor.userId } : { visibility: 'public' }),
       page,
       pageSize,
     });

@@ -1,4 +1,4 @@
-import type { ArtifactVisibility } from '@artifact-hub/shared';
+import type { ArtifactStatus, ArtifactVisibility } from '@artifact-hub/shared';
 
 export type AccessAction = 'view' | 'comment' | 'edit' | 'share' | 'delete';
 
@@ -7,8 +7,12 @@ export interface AccessTarget {
   id: string;
   ownerId: string;
   visibility: ArtifactVisibility;
+  status: ArtifactStatus;
   deletedAt: Date | null;
 }
 
-/** Why access was denied; logged at debug, never shown to the caller. */
-export type DenialReason = 'deleted' | 'not_owner';
+/**
+ * Why access was denied; logged at debug, never shown to the caller. `private`: the actor has
+ * no access at all; `owner_only`: they may view, but the action is the owner's.
+ */
+export type DenialReason = 'deleted' | 'draft' | 'private' | 'owner_only';

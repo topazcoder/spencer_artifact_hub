@@ -1,5 +1,5 @@
 import type { Readable } from 'node:stream';
-import type { ArtifactMimeType } from '@artifact-hub/shared';
+import type { ArtifactMimeType, ArtifactVisibility } from '@artifact-hub/shared';
 import type { ContentHint } from '../uploads/content/content.types.js';
 import type { ArtifactVersion } from './artifact-version.entity.js';
 import type { Artifact } from './artifact.entity.js';
@@ -29,6 +29,8 @@ export interface ArtifactContent {
 export interface ArtifactListOptions {
   /** Only artifacts owned by this user. */
   ownerId?: string;
+  /** Only artifacts with this visibility. */
+  visibility?: ArtifactVisibility;
   /** 1-based. */
   page: number;
   pageSize: number;

@@ -200,7 +200,7 @@ export class ArtifactsService {
 
   /**
    * Published artifacts the actor may view, most recently updated first, optionally narrowed by
-   * `options` (e.g. `ownerId`). Filters only ever narrow what `AccessPolicy` allows.
+   * `options` (e.g. `ownerId`, `visibility`). Filters only ever narrow what `AccessPolicy` allows.
    */
   async list(actor: Actor, options: ArtifactListOptions): Promise<ArtifactPage> {
     const qb = this.artifacts
@@ -218,6 +218,9 @@ export class ArtifactsService {
 
     if (options.ownerId) {
       qb.andWhere('artifact.ownerId = :ownerId', { ownerId: options.ownerId });
+    }
+    if (options.visibility) {
+      qb.andWhere('artifact.visibility = :visibility', { visibility: options.visibility });
     }
 
     const [items, total] = await qb.getManyAndCount();

@@ -162,7 +162,7 @@ can(actor, action, artifact, ctx?) where action ∈ view | comment | edit | shar
 | Who | view | comment | edit / new version / share / delete |
 |---|---|---|---|
 | Owner | ✓ | ✓ | ✓ |
-| Any user, artifact `public` | ✓ | ✓ | ✗ |
+| Any user, artifact `public` (and published: drafts stay owner-only) | ✓ | ✓ | ✗ (**403**: they can see it) |
 | Recipient of a valid `specific_users` share | ✓ | if permission=comment | ✗ |
 | Redeemer of a valid `anyone_with_link` share | ✓ | if permission=comment | ✗ |
 | Everyone else | ✗ (respond **404**, not 403, so existence isn't revealed) | ✗ | ✗ |
@@ -437,7 +437,7 @@ POST   /mcp
 | Screen | Purpose |
 |---|---|
 | Login / Signup | Simple, one demo account hint on the login page |
-| **Gallery** (home) | Tabs: *All public* · *Mine* · *Shared with me*. Card grid with live thumbnails (image / first PDF page via `<img>`/iframe preview, HTML in a scaled sandboxed iframe), type badge, tags, owner, open-comment count, updated time. NL search bar + tag/type filters |
+| **Gallery** (home) | Tabs: *Mine* (default) · *All public* · *Shared with me*, as `?scope=`. Card grid with live thumbnails (image / first PDF page via `<img>`/iframe preview, HTML in a scaled sandboxed iframe), type badge, tags, owner, open-comment count, updated time. NL search bar + tag/type filters |
 | **Artifact page** | Large viewer on the left; right panel tabs: *Feedback* (AI summary at top, threads with replies, resolve, version filter "this version / all versions"), *Versions* (list, switch, change notes), *Details* (metadata, edit if owner). Header actions: Share, Upload new version, Download, Open full screen |
 | **Share dialog** | Visibility toggle; create link (view/comment, anyone-with-link or emails with autocomplete of existing users, expiry presets: 1 day / 7 days / 30 days / never); list of active shares with copy + revoke |
 | **Publish dialog** | Drag-and-drop → AI pre-fill → edit → publish (visibility default private) |
@@ -526,7 +526,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 11. ✅ New versions, metadata edits, soft delete, and the Versions and Details tabs.
 
 **Access and sharing**
-12. Public visibility and the *All public* tab, plus the full `AccessPolicy` test matrix.
+12. ✅ Public visibility and the *All public* tab, plus the full `AccessPolicy` test matrix.
 13. Anyone-with-link shares: expiry, revoke, redeem, and the `/s/:token` page.
 14. Shares to specific users, the *Shared with me* tab and the share dialog.
 15. Plain full-text search and filters in the gallery.

@@ -265,6 +265,18 @@ describe('artifact page: versions and editing', () => {
     expect(api.artifact(item.id)).toMatchObject({ title: 'Pricing v2', latestVersionNo: 3 });
   });
 
+  it('makes the artifact public from the details form', async () => {
+    const { item, user } = showVersioned();
+    await user.click(await screen.findByRole('button', { name: 'Edit details' }));
+    expect(screen.getByRole('radio', { name: /Private/ })).toHaveProperty('checked', true);
+    await user.click(screen.getByRole('radio', { name: /Public/ }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Public')).toBeTruthy();
+    expect(screen.queryByText('Private')).toBeNull();
+    expect(api.artifact(item.id)?.visibility).toBe('public');
+  });
+
   it('shows validation errors from the server on their fields', async () => {
     const { user } = showVersioned();
     await user.click(await screen.findByRole('button', { name: 'Edit details' }));
