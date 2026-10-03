@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
+// Development defaults match docker-compose.yml, so `pnpm dev` works without a .env file.
 const DEV_APP_BASE_URL = 'http://localhost:5173';
+const DEV_DATABASE_URL = 'postgres://artifact_hub:artifact_hub@localhost:5432/artifact_hub';
 
 export const envSchema = z
   .object({
@@ -11,13 +13,23 @@ export const envSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
+    DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
+    /** Directory of the built SPA. When set, the API also serves the web app (production image). */
+    WEB_DIST_DIR: z.string().optional(),
   })
   .transform((env, ctx) => {
-    if (!env.APP_BASE_URL && env.NODE_ENV === 'production') {
-      ctx.addIssue({ code: 'custom', path: ['APP_BASE_URL'], message: 'Required in production' });
-      return z.NEVER;
+    if (env.NODE_ENV === 'production') {
+      for (const key of ['APP_BASE_URL', 'DATABASE_URL'] as const) {
+        if (!env[key])
+          ctx.addIssue({ code: 'custom', path: [key], message: 'Required in production' });
+      }
+      if (!env.APP_BASE_URL || !env.DATABASE_URL) return z.NEVER;
     }
-    return { ...env, APP_BASE_URL: (env.APP_BASE_URL ?? DEV_APP_BASE_URL).replace(/\/+$/, '') };
+    return {
+      ...env,
+      APP_BASE_URL: (env.APP_BASE_URL ?? DEV_APP_BASE_URL).replace(/\/+$/, ''),
+      DATABASE_URL: env.DATABASE_URL ?? DEV_DATABASE_URL,
+    };
   });
 
 export type Env = z.output<typeof envSchema>;

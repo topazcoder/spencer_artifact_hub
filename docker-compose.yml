@@ -1,0 +1,77 @@
+# Local development stack with hot reload: `pnpm dev:docker`.
+#   postgres  Postgres 16 on :5432 (also creates artifact_hub_test for the e2e suite)
+#   api       builds packages/shared, applies migrations, then runs NestJS and the shared
+#             package in watch mode on :3000
+#   web       Vite dev server on :5173 (proxies /api and /mcp to the api service)
+# `docker compose up -d postgres` starts only the database, for `pnpm dev` on the host.
+
+x-dev: &dev
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.dev
+  image: artifact-hub-dev
+  volumes:
+    - .:/app
+    # Keep the image's dependencies visible over the source mount. `pnpm dev:docker` passes
+    # --renew-anon-volumes so these are refreshed from the image after a lockfile change.
+    - /app/node_modules
+    - /app/apps/api/node_modules
+    - /app/apps/web/node_modules
+    - /app/packages/shared/node_modules
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: artifact_hub
+      POSTGRES_PASSWORD: artifact_hub
+      POSTGRES_DB: artifact_hub
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U artifact_hub -d artifact_hub']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *dev
+    command: >
+      sh -c "pnpm --filter @artifact-hub/shared build &&
+             pnpm --filter @artifact-hub/api db:migrate &&
+             pnpm --parallel --filter @artifact-hub/shared --filter @artifact-hub/api dev"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      APP_BASE_URL: http://localhost:5173
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://artifact_hub:artifact_hub@postgres:5432/artifact_hub
+    ports:
+      - '3000:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/api/health || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 20s
+
+  web:
+    <<: *dev
+    command: pnpm --filter @artifact-hub/web dev --host 0.0.0.0
+    environment:
+      VITE_API_PROXY_TARGET: http://api:3000
+    ports:
+      - '5173:5173'
+    depends_on:
+      # The api service builds packages/shared, which the web app imports.
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:

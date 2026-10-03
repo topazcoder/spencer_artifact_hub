@@ -1,0 +1,18 @@
+# Development image for docker-compose.yml: toolchain + workspace dependencies.
+# The source is bind-mounted at runtime for hot reload; each service sets its own command.
+FROM node:22-alpine
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && mkdir -p /pnpm/store /app && chown -R node:node /pnpm /app
+# Run as `node` (uid 1000) so files written to the mounted source (dist/) stay owned by the host user.
+USER node
+WORKDIR /app
+RUN pnpm config set store-dir /pnpm/store --global
+
+COPY --chown=node:node pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY --chown=node:node apps/api/package.json apps/api/
+COPY --chown=node:node apps/web/package.json apps/web/
+COPY --chown=node:node packages/shared/package.json packages/shared/
+RUN --mount=type=cache,id=pnpm-dev,target=/pnpm/store,uid=1000,gid=1000 \
+    pnpm install --frozen-lockfile

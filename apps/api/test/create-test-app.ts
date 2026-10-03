@@ -2,9 +2,7 @@ import type { INestApplication, Type } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
-import { parseEnv } from '../src/config/env.js';
-
-export const testEnv = parseEnv({ NODE_ENV: 'test', LOG_LEVEL: 'silent' });
+import { testEnv } from './test-env.js';
 
 /** Boots the real application (same module and HTTP setup as production) for supertest. */
 export async function createTestApp(

@@ -500,10 +500,10 @@ The work is built in thin **vertical slices**: each step goes from the database 
 
 Two changes from a feature-by-feature order: idempotency and the sweeper come after the core flows (nothing earlier depends on them), and `AccessPolicy` starts as owner-only in step 8 and is extended in step 12.
 
-**Foundation**
-1. Monorepo scaffold: pnpm workspace, shared package, empty Nest and Vite apps, lint and tsconfig.
-2. Config validated with zod at boot, pino logging with request IDs, error filter and error codes, health endpoint.
-3. Docker, compose, Postgres with TypeORM and the first migration, then **deploy to Railway**.
+**Foundation** ✅ done (Railway deploy deferred to the end)
+1. ✅ Monorepo scaffold: pnpm workspace, shared package, empty Nest and Vite apps, lint and tsconfig.
+2. ✅ Config validated with zod at boot, pino logging with request IDs, error filter and error codes, health endpoint.
+3. ✅ Docker, compose, Postgres with TypeORM and the first migration, then **deploy to Railway** (deploy deferred).
 
 **Auth**
 4. Signup, login, logout and `me` endpoints, sessions, guard, CSRF Origin check, plus e2e tests.
