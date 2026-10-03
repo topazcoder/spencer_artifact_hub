@@ -104,7 +104,8 @@ artifacts
   current_version_id FK NULL, latest_version_no int default 0,
   status enum('draft','published')           -- draft = awaiting first upload (MCP upload session)
   metadata_source enum('user','ai','mixed'),
-  search_vector tsvector (generated: title A, tags B, description C, extracted text D),
+  search_vector tsvector (title A, tags B, description C, extracted text D; added in step 15:
+                         a generated column can't read artifact_versions.extracted_text),
   created_at, updated_at, deleted_at NULL
 
 artifact_versions                             -- immutable
@@ -400,9 +401,9 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 POST   /api/auth/signup | /login | /logout        GET /api/auth/me
 GET    /api/tokens   POST /api/tokens   DELETE /api/tokens/:id
 
-GET    /api/artifacts?q=&scope=mine|shared|public&type=&tag=&cursor=
+GET    /api/artifacts?q=&scope=mine|shared|public&type=&tag=&page=&pageSize=
 POST   /api/uploads/preview                       (multipart → detected type + AI suggestions)
-POST   /api/artifacts                             (multipart: file + metadata)          [Idempotency-Key]
+POST   /api/artifacts                             (multipart: `metadata` JSON field, then `file`) [Idempotency-Key]
 GET    /api/artifacts/:id
 PATCH  /api/artifacts/:id                         (metadata / visibility)
 DELETE /api/artifacts/:id                         (soft delete)
@@ -516,7 +517,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 **Artifacts**
 6. ✅ `StorageDriver` with the local driver, plus unit tests.
 7. ✅ Content validation (type sniffing, allowlist, streaming size limit), plus unit tests.
-8. Create an artifact with v1, get one, list mine. `AccessPolicy` starts as owner-only.
+8. ✅ Create an artifact with v1, get one, list mine. `AccessPolicy` starts as owner-only.
 9. Content endpoint with sandbox headers, and a viewer for each type.
 10. Publish dialog and the gallery's *Mine* tab, without AI.
 11. New versions, metadata edits, soft delete, and the Versions and Details tabs.

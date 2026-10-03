@@ -1,6 +1,7 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
+import { ArtifactsModule } from './artifacts/artifacts.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { AllExceptionsFilter } from './common/errors/all-exceptions.filter.js';
 import { buildLoggerParams } from './common/logging/logger.config.js';
@@ -22,6 +23,7 @@ export class AppModule {
         DatabaseModule,
         RateLimitModule,
         AuthModule,
+        ArtifactsModule,
         HealthModule,
         WebModule.register(env.WEB_DIST_DIR),
       ],
