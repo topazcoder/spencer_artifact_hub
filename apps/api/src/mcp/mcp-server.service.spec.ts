@@ -43,7 +43,7 @@ describe('McpServerService', () => {
     expect(result.content).toEqual([
       {
         type: 'text',
-        text: "Artifact not found. It may not exist, or you don't have access to it. Use find_artifacts to look it up.",
+        text: "Artifact not found. It may not exist, or you don't have access to it. Find artifacts with find_artifacts, and comment ids with get_feedback.",
       },
     ]);
   });
@@ -54,6 +54,16 @@ describe('McpServerService', () => {
     });
     const result = await serviceWith(missing).service.call(missing, actor, {}, 'req-1');
     expect(result.content).toEqual([{ type: 'text', text: 'Version 9 not found. Try v1.' }]);
+  });
+
+  it('says what was wrong with a validation error', async () => {
+    const invalid = tool('invalid', async () => {
+      throw new AppError(ErrorCode.VALIDATION_FAILED, 'The request is invalid.', [
+        { path: 'versionNo', message: 'There is no version 5.' },
+      ]);
+    });
+    const result = await serviceWith(invalid).service.call(invalid, actor, {}, 'req-1');
+    expect(result.content).toEqual([{ type: 'text', text: 'There is no version 5.' }]);
   });
 
   it('passes other domain errors on as they are', async () => {

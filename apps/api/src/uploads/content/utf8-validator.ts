@@ -6,7 +6,7 @@ export class Utf8Validator {
 
   write(chunk: Buffer): void {
     this.check(() => this.decoder.decode(chunk, { stream: true }));
-    if (chunk.includes(0)) throw unsupported('Text files must not contain NUL bytes.');
+    if (chunk.includes(0)) throw unsupported('nul_bytes', 'Text files must not contain NUL bytes.');
   }
 
   /** Fails if the content ends in the middle of a character. */
@@ -18,7 +18,7 @@ export class Utf8Validator {
     try {
       decode();
     } catch {
-      throw unsupported('Text files must be UTF-8 encoded.');
+      throw unsupported('not_utf8', 'Text files must be UTF-8 encoded.');
     }
   }
 }

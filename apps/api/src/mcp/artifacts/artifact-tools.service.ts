@@ -21,6 +21,7 @@ import { parseArtifactRef } from '../artifact-ref.js';
 import { defineTool } from '../define-tool.js';
 import { countFeedback } from '../feedback/feedback-counts.js';
 import type { McpTool, McpToolProvider, ToolOutput } from '../mcp.types.js';
+import { accessData } from '../sharing/access-data.js';
 import { typeName } from '../type-names.js';
 import { versionNotFound } from '../version-not-found.js';
 import type { FeedbackCounts } from '../feedback/feedback.types.js';
@@ -263,20 +264,8 @@ export class ArtifactToolsService implements McpToolProvider {
           resolved,
         })),
       },
-      // Owner only. The link's URL is left out: share_artifact hands it out.
-      access: access && {
-        company: access.company.enabled ? { version: access.company.pinnedVersionNo } : null,
-        people: access.people.map((person) => ({
-          name: person.user.displayName,
-          email: person.user.email,
-          permission: person.permission,
-          version: person.pinnedVersionNo,
-        })),
-        link: access.link && {
-          version: access.link.pinnedVersionNo,
-          expires_at: access.link.expiresAt,
-        },
-      },
+      // Owner only.
+      access: access && accessData(access, { linkUrl: false }),
       next_actions: [
         ...(counts.open + counts.resolved > 0 ? ['Call get_feedback to read the comments.'] : []),
         ...(versions.length > 1 && version

@@ -1,8 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { COMMENT_INCLUDE_OPTIONS } from '@artifact-hub/shared';
+import {
+  COMMENT_BODY_MAX_LENGTH,
+  COMMENT_INCLUDE_OPTIONS,
+  createCommentRequestSchema,
+} from '@artifact-hub/shared';
 import { z } from 'zod';
 import type { ArtifactView } from '../../artifacts/artifacts.types.js';
 import { ArtifactsService } from '../../artifacts/artifacts.service.js';
+import type { Actor } from '../../auth/auth.types.js';
 import { CommentsService } from '../../comments/comments.service.js';
 import type { CommentThreadView, CommentView } from '../../comments/comments.types.js';
 import { InjectEnv } from '../../config/config.module.js';
@@ -20,7 +25,10 @@ export const MAX_THREADS = 30;
 /** Replies returned at most per thread, oldest first. */
 export const MAX_REPLIES = 10;
 
-/** Reading reviewers' comments. The agent summarizes them for what the user asked. */
+/**
+ * Reading reviewers' comments (the agent summarizes them for what the user asked), and taking
+ * part: commenting, replying, resolving.
+ */
 @Injectable()
 export class FeedbackToolsService implements McpToolProvider {
   constructor(
@@ -30,7 +38,7 @@ export class FeedbackToolsService implements McpToolProvider {
   ) {}
 
   tools(): McpTool[] {
-    return [this.getFeedback()];
+    return [this.getFeedback(), this.addComment(), this.resolveComment()];
   }
 
   private getFeedback() {
@@ -59,12 +67,7 @@ export class FeedbackToolsService implements McpToolProvider {
         const ref = parseArtifactRef(input.artifact);
         const versionNo = input.version ?? ref.versionNo;
         const view = await this.artifacts.get(actor, ref.id);
-        if (versionNo !== undefined) {
-          const visible = (await this.artifacts.listVersions(actor, ref.id)).map(
-            (v) => v.versionNo,
-          );
-          if (!visible.includes(versionNo)) throw versionNotFound(versionNo, visible);
-        }
+        if (versionNo !== undefined) await this.assertVisibleVersion(actor, ref.id, versionNo);
         // Everything once: the counts cover resolved threads even when only open ones are shown.
         const all = await this.comments.list(actor, ref.id, { versionNo, include: 'all' });
         const threads =
@@ -77,6 +80,110 @@ export class FeedbackToolsService implements McpToolProvider {
         });
       },
     });
+  }
+
+  private addComment() {
+    return defineTool({
+      name: 'add_comment',
+      title: 'Add a comment',
+      description:
+        'Post a comment on an artifact, or reply to a comment, as the user ("tell them the header looks off", "reply to Sara\'s comment saying it\'s fixed"). It is posted under the user\'s name, so write what the user wants to say, in their voice. A comment is on one version: the newest the user can see unless you pass version. Replies go on their comment\'s version; get the comment id from get_feedback.',
+      inputSchema: {
+        artifact: z
+          .string()
+          .describe("The artifact's id, or its page URL (…/artifacts/<id>, optionally ?v=N)."),
+        body: z
+          .string()
+          .trim()
+          .min(1)
+          .max(COMMENT_BODY_MAX_LENGTH)
+          .describe('The comment, as plain text.'),
+        version: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe('The version to comment on. Not needed for a reply.'),
+        reply_to: z
+          .string()
+          .optional()
+          .describe('The id of the top-level comment to reply to, from get_feedback.'),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      handler: async (actor, input) => {
+        const ref = parseArtifactRef(input.artifact);
+        const versionNo = input.version ?? (input.reply_to ? undefined : ref.versionNo);
+        if (versionNo !== undefined) await this.assertVisibleVersion(actor, ref.id, versionNo);
+        const options = createCommentRequestSchema.parse({
+          body: input.body,
+          versionNo,
+          parentId: input.reply_to,
+        });
+        const { comment } = await this.comments.create(actor, ref.id, options);
+        const postedOn = comment.version.versionNo;
+        return {
+          comment: {
+            id: comment.id,
+            version: postedOn,
+            reply_to: comment.parentId,
+            url: artifactPageUrl(this.env.APP_BASE_URL, comment.artifactId, postedOn),
+          },
+          next_actions: ['Tell the user it was posted, with the url.'],
+        };
+      },
+    });
+  }
+
+  private resolveComment() {
+    return defineTool({
+      name: 'resolve_comment',
+      title: 'Resolve a comment',
+      description:
+        'Mark a comment thread as resolved, or reopen it ("mark my comment about the logo as resolved"). Only the person who wrote a top-level comment can, so this works on the user\'s own threads. Get the comment id from get_feedback.',
+      inputSchema: {
+        comment_id: z.string().describe('The id of the top-level comment, from get_feedback.'),
+        resolved: z.boolean().default(true).describe('true to resolve it, false to reopen it.'),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      handler: async (actor, input) => {
+        const { comment } = await this.comments.update(actor, input.comment_id, {
+          resolved: input.resolved,
+        });
+        return {
+          comment: {
+            id: comment.id,
+            resolved: comment.resolvedAt !== null,
+            version: comment.version.versionNo,
+            url: artifactPageUrl(
+              this.env.APP_BASE_URL,
+              comment.artifactId,
+              comment.version.versionNo,
+            ),
+          },
+          next_actions: [],
+        };
+      },
+    });
+  }
+
+  /** Fails, listing the versions the actor can see, unless `versionNo` is one of them. */
+  private async assertVisibleVersion(
+    actor: Actor,
+    artifactId: string,
+    versionNo: number,
+  ): Promise<void> {
+    const visible = (await this.artifacts.listVersions(actor, artifactId)).map((v) => v.versionNo);
+    if (!visible.includes(versionNo)) throw versionNotFound(versionNo, visible);
   }
 
   private feedback(

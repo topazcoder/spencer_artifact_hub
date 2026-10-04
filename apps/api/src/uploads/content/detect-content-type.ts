@@ -44,15 +44,15 @@ export async function detectContentType(
   head: Buffer,
   hint: ContentHint = {},
 ): Promise<ArtifactMimeType> {
-  if (head.length === 0) throw unsupported('The file is empty.');
+  if (head.length === 0) throw unsupported('empty', 'The file is empty.');
 
   const detected = await fileTypeFromBuffer(head);
   if (detected && isBinaryMimeType(detected.mime)) return detected.mime;
   // file-type reports text that starts with `<?xml` as XML; SVG is checked below.
-  if (detected && detected.mime !== 'application/xml') throw unsupported();
+  if (detected && detected.mime !== 'application/xml') throw unsupported('other_type');
 
   const text = decodeUtf8Head(head);
-  if (text === null || text.includes('\0')) throw unsupported();
+  if (text === null || text.includes('\0')) throw unsupported('not_text');
   const markup = text.replace(/^﻿/, '').replace(PROLOGUE, '');
 
   const format = hint.textFormat ?? textFormatFromFilename(hint.filename);
@@ -60,15 +60,17 @@ export async function detectContentType(
     case 'markdown':
       return TEXT_FORMAT_MIME_TYPES.markdown;
     case 'svg':
-      if (!SVG_ROOT.test(markup)) throw unsupported('The file does not contain an SVG image.');
+      if (!SVG_ROOT.test(markup))
+        throw unsupported('not_svg', 'The file does not contain an SVG image.');
       return TEXT_FORMAT_MIME_TYPES.svg;
     case 'html':
-      if (!HTML_MARKUP.test(markup)) throw unsupported('The file does not contain HTML markup.');
+      if (!HTML_MARKUP.test(markup))
+        throw unsupported('not_html', 'The file does not contain HTML markup.');
       return TEXT_FORMAT_MIME_TYPES.html;
     case undefined:
       if (SVG_ROOT.test(markup)) return TEXT_FORMAT_MIME_TYPES.svg;
       if (HTML_DOCUMENT.test(markup)) return TEXT_FORMAT_MIME_TYPES.html;
-      throw unsupported();
+      throw unsupported('unknown_text');
   }
 }
 
