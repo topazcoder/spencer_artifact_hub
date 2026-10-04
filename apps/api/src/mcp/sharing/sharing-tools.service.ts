@@ -5,6 +5,7 @@ import {
   SHARE_PEOPLE_MAX,
   SHARE_PERMISSIONS,
   sharePeopleRequestSchema,
+  userSearchQuerySchema,
 } from '@artifact-hub/shared';
 import { z } from 'zod';
 import { ArtifactsService } from '../../artifacts/artifacts.service.js';
@@ -13,6 +14,7 @@ import { AppError } from '../../common/errors/app-error.js';
 import { InjectEnv } from '../../config/config.module.js';
 import type { Env } from '../../config/config.types.js';
 import { SharingService } from '../../sharing/sharing.service.js';
+import { UsersService } from '../../users/users.service.js';
 import { artifactPageUrl } from '../app-urls.js';
 import { parseArtifactRef } from '../artifact-ref.js';
 import { defineTool } from '../define-tool.js';
@@ -34,23 +36,58 @@ const DEFAULT_LINK_EXPIRY_DAYS = 7;
 const MAX_LINK_EXPIRY_DAYS = 365;
 const DAY_MS = 24 * 60 * 60_000;
 
+/** As many as the web app's share dialog shows; the tool asks for one more to know if there are more. */
+const PEOPLE_SHOWN = 5;
+
 const VERSION_ADVICE =
   'Omit to share all versions, including future ones; pass a number to show only that version.';
 
 /**
- * Who can see an artifact: sharing it, seeing who has access, and taking access away. Owner
- * only (`SharingService` checks). Changes take effect at once.
+ * Who can see an artifact: finding the people to share with, sharing it, seeing who has
+ * access, and taking access away. Changing access is owner only (`SharingService` checks) and
+ * takes effect at once.
  */
 @Injectable()
 export class SharingToolsService implements McpToolProvider {
   constructor(
     private readonly artifacts: ArtifactsService,
     private readonly sharing: SharingService,
+    private readonly users: UsersService,
     @InjectEnv() private readonly env: Env,
   ) {}
 
   tools(): McpTool[] {
-    return [this.shareArtifact(), this.manageAccess()];
+    return [this.findPeople(), this.shareArtifact(), this.manageAccess()];
+  }
+
+  private findPeople() {
+    return defineTool({
+      name: 'find_people',
+      title: 'Find people',
+      description:
+        'Look up colleagues by name or email, to find who the user means before sharing ("share it with John", "give Sara access"). Use it when the user names someone without an email. Matches the start of an email or name, at least 3 characters, never the user themself.',
+      inputSchema: {
+        query: userSearchQuerySchema.shape.q.describe(
+          "Part of the person's name or email, at least 3 characters.",
+        ),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      handler: async (actor, { query }) => {
+        const found = await this.users.search(actor, query, PEOPLE_SHOWN + 1);
+        const people = found.slice(0, PEOPLE_SHOWN);
+        const more = found.length > PEOPLE_SHOWN;
+        return {
+          people: people.map((user) => ({ name: user.displayName, email: user.email })),
+          more,
+          next_actions: [findPeopleAdvice(people.length, more)],
+        };
+      },
+    });
   }
 
   private shareArtifact() {
@@ -68,7 +105,7 @@ export class SharingToolsService implements McpToolProvider {
           .max(SHARE_PEOPLE_MAX)
           .optional()
           .describe(
-            "with: people only. Their emails: they must already have an account. Ask the user if you don't know them.",
+            "with: people only. Their emails: they must already have an account. If you only have a name, call find_people first and confirm who they mean; ask the user if you don't know.",
           ),
         permission: z
           .enum(SHARE_PERMISSIONS)
@@ -226,4 +263,15 @@ export class SharingToolsService implements McpToolProvider {
       next_actions: nextActions,
     };
   }
+}
+
+/** What the agent does with a `find_people` result: never share with a guess. */
+function findPeopleAdvice(count: number, more: boolean): string {
+  if (count === 0) {
+    return "Nobody matches. Ask the user for the person's email, or a longer part of their name.";
+  }
+  if (count === 1) {
+    return 'One person matches. Ask the user to confirm it is them (name and email) before sharing.';
+  }
+  return `${more ? 'More than ' : ''}${count} people match. Show the user their names and emails and ask which one they mean${more ? ', or for more of the name if none of them is' : ''}. Share only after they choose.`;
 }

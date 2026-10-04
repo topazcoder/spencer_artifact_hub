@@ -148,6 +148,7 @@ describe('MCP server (e2e)', () => {
         update_artifact: [false, false],
         add_comment: [false, false],
         resolve_comment: [false, false],
+        find_people: [true, false],
         share_artifact: [false, false],
         manage_access: [false, true],
       });
@@ -672,6 +673,48 @@ describe('MCP server (e2e)', () => {
         comment_id: randomUUID(),
       });
       expect(result).toMatchObject({ isError: true, text: expect.stringMatching(/get_feedback/) });
+    });
+  });
+
+  describe('find_people', () => {
+    const domainOf = (user: TestUser) => user.email.split('@')[1] ?? '';
+
+    it('finds one colleague and says to confirm before sharing', async () => {
+      const { data, isError } = await call(await connect(ada), 'find_people', {
+        query: bob.email,
+      });
+      expect(isError).toBe(false);
+      expect(data.people).toEqual([{ name: 'Bob', email: bob.email }]);
+      expect(data.more).toBe(false);
+      expect(data.next_actions).toEqual([expect.stringMatching(/confirm/)]);
+    });
+
+    it('lists several matches, never the caller, and says to ask which one', async () => {
+      const { data } = await call(await connect(ada), 'find_people', { query: domainOf(ada) });
+      expect(data.people).toEqual(
+        expect.arrayContaining([
+          { name: 'Bob', email: bob.email },
+          { name: 'Carol', email: carol.email },
+        ]),
+      );
+      expect(data.people).toHaveLength(2);
+      expect(data.next_actions).toEqual([expect.stringMatching(/which one/)]);
+    });
+
+    it('says to ask for an email when nobody matches', async () => {
+      const { data } = await call(await connect(ada), 'find_people', {
+        query: `nobody-${randomUUID()}`,
+      });
+      expect(data.people).toEqual([]);
+      expect(data.next_actions).toEqual([
+        expect.stringMatching(/Ask the user for the person's email/),
+      ]);
+    });
+
+    it('wants at least 3 characters', async () => {
+      const { isError, text } = await call(await connect(ada), 'find_people', { query: 'bo' });
+      expect(isError).toBe(true);
+      expect(text).toMatch(/at least 3 characters/);
     });
   });
 

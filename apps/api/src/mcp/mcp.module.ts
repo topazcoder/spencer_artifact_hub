@@ -3,6 +3,7 @@ import { ArtifactsModule } from '../artifacts/artifacts.module.js';
 import { CommentsModule } from '../comments/comments.module.js';
 import { SharingModule } from '../sharing/sharing.module.js';
 import { UploadSessionsModule } from '../uploads/sessions/upload-sessions.module.js';
+import { UsersModule } from '../users/users.module.js';
 import { ArtifactToolsService } from './artifacts/artifact-tools.service.js';
 import { FeedbackToolsService } from './feedback/feedback-tools.service.js';
 import { McpController } from './mcp.controller.js';
@@ -20,7 +21,7 @@ const TOOL_PROVIDERS = [
 ];
 
 @Module({
-  imports: [ArtifactsModule, CommentsModule, SharingModule, UploadSessionsModule],
+  imports: [ArtifactsModule, CommentsModule, SharingModule, UploadSessionsModule, UsersModule],
   controllers: [McpController],
   providers: [
     ...TOOL_PROVIDERS,
