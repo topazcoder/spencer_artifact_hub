@@ -6,21 +6,26 @@ const TOKEN = 'ah_secret';
 
 describe('claudeDesktopConfig', () => {
   it('points mcp-remote at the endpoint, with the token in its env', () => {
-    expect(JSON.parse(claudeDesktopConfig(ORIGIN, TOKEN))).toEqual({
-      mcpServers: {
-        'artifact-hub': {
-          command: 'npx',
-          args: [
-            '-y',
-            'mcp-remote',
-            'https://hub.example.com/mcp',
-            '--header',
-            'Authorization:${ARTIFACT_HUB_AUTH}',
-          ],
-          env: { ARTIFACT_HUB_AUTH: 'Bearer ah_secret' },
-        },
+    expect(JSON.parse(`{${claudeDesktopConfig(ORIGIN, TOKEN)}}`)).toEqual({
+      'artifact-hub': {
+        command: 'npx',
+        args: [
+          '-y',
+          'mcp-remote',
+          'https://hub.example.com/mcp',
+          '--header',
+          'Authorization:${ARTIFACT_HUB_AUTH}',
+        ],
+        env: { ARTIFACT_HUB_AUTH: 'Bearer ah_secret' },
       },
     });
+  });
+
+  it('is the bare entry, without surrounding braces', () => {
+    const config = claudeDesktopConfig(ORIGIN, TOKEN);
+    expect(config.startsWith('"artifact-hub": {')).toBe(true);
+    expect(config.endsWith('}')).toBe(true);
+    expect(config).not.toContain('mcpServers');
   });
 });
 

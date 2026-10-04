@@ -1,7 +1,12 @@
 import { CopyIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
 import { copyWithToast } from '@/lib/clipboard.ts';
-import { claudeCodeCommand, claudeDesktopConfig, TOKEN_PLACEHOLDER } from './mcp-config.ts';
+import {
+  CLAUDE_DESKTOP_HINT,
+  claudeCodeCommand,
+  claudeDesktopConfig,
+  TOKEN_PLACEHOLDER,
+} from './mcp-config.ts';
 
 /** Ready-to-copy setup for MCP clients, with the new token filled in when there is one. */
 export function McpSetup({ secret }: { secret: string | null }) {
@@ -19,7 +24,7 @@ export function McpSetup({ secret }: { secret: string | null }) {
       <Snippet
         title="Claude Desktop"
         what="Config"
-        hint="Add this to claude_desktop_config.json (Settings → Developer → Edit Config), then restart Claude Desktop."
+        hint={CLAUDE_DESKTOP_HINT}
         code={claudeDesktopConfig(origin, token)}
       />
       <Snippet

@@ -2,7 +2,7 @@ import { CopyIcon, KeyRoundIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { copyWithToast } from '@/lib/clipboard.ts';
-import { claudeCodeCommand, claudeDesktopConfig } from './mcp-config.ts';
+import { CLAUDE_DESKTOP_HINT, claudeCodeCommand, claudeDesktopConfig } from './mcp-config.ts';
 
 /** The token just created. The server never returns it again, so this is the only chance. */
 export function NewTokenNotice({ secret, onDismiss }: { secret: string; onDismiss: () => void }) {
@@ -37,7 +37,7 @@ export function NewTokenNotice({ secret, onDismiss }: { secret: string; onDismis
         <CopyRow
           title="Claude Desktop"
           what="Config"
-          hint="Paste into claude_desktop_config.json (Settings → Developer → Edit Config), then restart Claude Desktop."
+          hint={CLAUDE_DESKTOP_HINT}
           text={claudeDesktopConfig(window.location.origin, secret)}
         />
         <CopyRow

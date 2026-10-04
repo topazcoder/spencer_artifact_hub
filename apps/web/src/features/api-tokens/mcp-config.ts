@@ -7,27 +7,36 @@ export function mcpEndpoint(origin: string): string {
   return `${origin}/mcp`;
 }
 
+/** Where the Claude Desktop entry goes, shown next to the snippet. */
+export const CLAUDE_DESKTOP_HINT =
+  'In Claude Desktop open Settings → Developer → Edit Config to open claude_desktop_config.json. Paste this inside the "mcpServers": { } braces, after a comma if it already has other servers (if there is no "mcpServers" yet, add "mcpServers": { and } around it). Save, then restart Claude Desktop.';
+
 /**
- * Claude Desktop config: `mcp-remote` bridges its stdio to our HTTP endpoint. The header is
- * passed through an env variable because some clients split arguments on spaces.
+ * The `"artifact-hub": { … }` entry for the `mcpServers` object of claude_desktop_config.json,
+ * without the surrounding braces so it pastes in next to existing servers. `mcp-remote` bridges
+ * Claude Desktop's stdio to our HTTP endpoint. The header is passed through an env variable
+ * because some clients split arguments on spaces.
  */
 export function claudeDesktopConfig(origin: string, token: string): string {
-  const config = {
-    mcpServers: {
-      [SERVER_NAME]: {
-        command: 'npx',
-        args: [
-          '-y',
-          'mcp-remote',
-          mcpEndpoint(origin),
-          '--header',
-          'Authorization:${ARTIFACT_HUB_AUTH}',
-        ],
-        env: { ARTIFACT_HUB_AUTH: `Bearer ${token}` },
-      },
+  const entry = {
+    [SERVER_NAME]: {
+      command: 'npx',
+      args: [
+        '-y',
+        'mcp-remote',
+        mcpEndpoint(origin),
+        '--header',
+        'Authorization:${ARTIFACT_HUB_AUTH}',
+      ],
+      env: { ARTIFACT_HUB_AUTH: `Bearer ${token}` },
     },
   };
-  return JSON.stringify(config, null, 2);
+  // Drop the wrapping object's braces and its one level of indentation.
+  return JSON.stringify(entry, null, 2)
+    .split('\n')
+    .slice(1, -1)
+    .map((line) => line.slice(2))
+    .join('\n');
 }
 
 /** Claude Code talks HTTP directly. */
