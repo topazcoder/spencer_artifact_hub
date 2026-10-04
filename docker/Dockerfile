@@ -12,14 +12,13 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm --filter @artifact-hub/shared build \
  && pnpm --filter @artifact-hub/web build \
  && pnpm --filter @artifact-hub/api build
 # Standalone API directory with production dependencies only (workspace packages copied in).
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm --filter @artifact-hub/api deploy --prod --legacy /out/api
+RUN pnpm --filter @artifact-hub/api deploy --prod --legacy /out/api
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production \
