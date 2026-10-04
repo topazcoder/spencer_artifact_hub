@@ -38,6 +38,8 @@ export const envSchema = z
     RATE_LIMIT_USER_SEARCH_PER_MINUTE: z.coerce.number().int().min(1).default(60),
     /** Requests per client IP to share link pages and their content, which need no sign-in. */
     RATE_LIMIT_SHARE_LINK_PER_MINUTE: z.coerce.number().int().min(1).default(120),
+    /** Requests per user authenticated with an API token (MCP, upload `PUT`). */
+    RATE_LIMIT_API_TOKEN_PER_MINUTE: z.coerce.number().int().min(1).default(120),
     /**
      * 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts share link tokens so owners
      * can copy their links again; links are looked up by hash, so a database leak alone exposes

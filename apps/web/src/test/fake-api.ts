@@ -1,4 +1,6 @@
 import {
+  type ApiToken,
+  API_TOKENS_MAX,
   ARTIFACT_TYPE_FILTERS,
   type Artifact,
   type ArtifactMimeType,
@@ -43,6 +45,7 @@ const LINK_RESET_ROUTE = /^POST \/api\/artifacts\/([^/?]+)\/access\/link\/reset$
 const SHARED_ROUTE = /^GET \/api\/s\/([^/?]+)(\/content)?(\?.*)?$/;
 const COMMENTS_ROUTE = /^(GET|POST) \/api\/artifacts\/([^/?]+)\/comments(?:\?(.*))?$/;
 const COMMENT_ROUTE = /^(PATCH|DELETE) \/api\/comments\/([^/?]+)$/;
+const TOKEN_ROUTE = /^DELETE \/api\/tokens\/([^/?]+)$/;
 
 const MIME_BY_EXTENSION: Record<string, ArtifactMimeType> = {
   html: 'text/html',
@@ -108,6 +111,8 @@ export function installFakeApi() {
   let nextUpdateResponse: Response | null = null;
   let maxArtifactBytes = 10 * 1024 * 1024;
   let signedIn: User | null = null;
+  /** The signed-in user's live API tokens, newest first. */
+  let apiTokens: ApiToken[] = [];
 
   const publish = (form: FormData): Response => {
     publishedForms.push(form);
@@ -559,7 +564,41 @@ export function installFakeApi() {
       return json(200, { artifact: seen(stored.artifact) });
     }
 
+    const tokenMatch = TOKEN_ROUTE.exec(route);
+    if (tokenMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      const id = decodeURIComponent(tokenMatch[1] ?? '');
+      if (!apiTokens.some((t) => t.id === id)) {
+        return error(404, ErrorCode.NOT_FOUND, 'API token not found.');
+      }
+      apiTokens = apiTokens.filter((t) => t.id !== id);
+      return json(204);
+    }
+
     switch (route) {
+      case 'GET /api/tokens':
+        if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+        return json(200, { items: apiTokens });
+      case 'POST /api/tokens': {
+        if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+        if (apiTokens.length >= API_TOKENS_MAX) {
+          return error(
+            409,
+            ErrorCode.CONFLICT,
+            `You can have at most ${API_TOKENS_MAX} API tokens. Revoke one you no longer use.`,
+          );
+        }
+        const secret = `ah_${crypto.randomUUID().replaceAll('-', '')}`;
+        const token: ApiToken = {
+          id: crypto.randomUUID(),
+          name: body.name.trim(),
+          prefix: secret.slice(0, 8),
+          lastUsedAt: null,
+          createdAt: new Date().toISOString(),
+        };
+        apiTokens = [token, ...apiTokens];
+        return json(201, { token, secret });
+      }
       case 'GET /api/auth/me':
         return signedIn
           ? json(200, { user: signedIn })
@@ -731,6 +770,22 @@ export function installFakeApi() {
     /** The artifact as the fake server currently has it, if it still exists. */
     artifact(id: string): Artifact | undefined {
       return artifacts.get(id)?.artifact;
+    },
+    /** Gives the signed-in user an API token, as if created earlier. */
+    addApiToken(name: string, lastUsedAt: string | null = null): ApiToken {
+      const token: ApiToken = {
+        id: crypto.randomUUID(),
+        name,
+        prefix: 'ah_AbCdE',
+        lastUsedAt,
+        createdAt: new Date().toISOString(),
+      };
+      apiTokens = [token, ...apiTokens];
+      return token;
+    },
+    /** The signed-in user's live API tokens, as the fake server has them. */
+    apiTokens(): ApiToken[] {
+      return apiTokens;
     },
     signIn(user: User) {
       signedIn = user;

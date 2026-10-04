@@ -1,5 +1,6 @@
 import type { User } from '@artifact-hub/shared';
-import { LogOutIcon } from 'lucide-react';
+import { LogOutIcon, SettingsIcon } from 'lucide-react';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -48,6 +49,12 @@ export function UserMenu({ user }: { user: User }) {
           <div className="truncate text-xs text-muted-foreground">{user.email}</div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to="/settings">
+            <SettingsIcon />
+            Settings
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={onLogout} disabled={logout.isPending}>
           <LogOutIcon />
           Log out

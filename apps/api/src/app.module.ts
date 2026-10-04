@@ -1,6 +1,8 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
+import { ApiTokenAuthenticatorService } from './api-tokens/api-token-authenticator.service.js';
+import { ApiTokensModule } from './api-tokens/api-tokens.module.js';
 import { ArtifactsModule } from './artifacts/artifacts.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { ClientConfigModule } from './client-config/client-config.module.js';
@@ -25,7 +27,11 @@ export class AppModule {
         LoggerModule.forRoot(buildLoggerParams(env)),
         DatabaseModule,
         RateLimitModule,
-        AuthModule,
+        AuthModule.register({
+          imports: [ApiTokensModule],
+          authenticators: [ApiTokenAuthenticatorService],
+        }),
+        ApiTokensModule,
         ArtifactsModule,
         SharingModule,
         CommentsModule,

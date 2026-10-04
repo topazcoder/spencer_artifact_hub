@@ -22,6 +22,11 @@ Known limitations of the current build, and planned improvements.
 - Comments from link visitors, with a guest name and spam protection.
 - Notify people when something is shared with them (see Platform).
 
+### API tokens
+- Optional expiry, and scopes (e.g. read-only tokens for search-only agents).
+- OAuth for MCP clients (the MCP authorization spec), so users connect by signing in instead of pasting a token. Its access tokens plug in as one more `RequestAuthenticator`; the MCP TypeScript SDK's auth helpers cover the authorization-server endpoints.
+- Warn the owner about tokens unused for a long time, and revoke them automatically after a while.
+
 ### Password lifecycle
 - Password reset via email, password change, and session management UI ("log out other devices").
 

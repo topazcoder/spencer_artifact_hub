@@ -50,9 +50,9 @@ artifact_hub/
 │  │  │  ├─ config/           # typed env config (zod-validated at boot)
 │  │  │  ├─ common/           # errors, filters, interceptors, guards, idempotency, request-id
 │  │  │  ├─ database/         # data source, migrations, seed
-│  │  │  ├─ auth/             # signup/login/logout, sessions, session guard
+│  │  │  ├─ auth/             # signup/login/logout, sessions, AuthGuard + pluggable authenticators
 │  │  │  ├─ users/
-│  │  │  ├─ api-tokens/       # create/list/revoke PATs, bearer guard
+│  │  │  ├─ api-tokens/       # create/list/revoke PATs, API token authenticator
 │  │  │  ├─ storage/          # StorageDriver interface + local/s3/azure drivers
 │  │  │  ├─ artifacts/        # artifacts + versions, content streaming
 │  │  │  ├─ uploads/          # upload sessions (MCP binary flow), content validation
@@ -233,7 +233,7 @@ The web UI and MCP use the same pipeline:
 ## 8. MCP server
 
 - Uses `@modelcontextprotocol/sdk`, **Streamable HTTP** transport in stateless mode, mounted in Nest at `POST /mcp`.
-- **Auth:** `Authorization: Bearer <api token>` → `Actor{via:'mcp'}`. Tokens are created on the **Settings → API tokens** page, which also shows a copy-paste Claude Desktop config:
+- **Auth:** `Authorization: Bearer <api token>` → `Actor{via:'mcp'}`. Tokens are created on the **Settings → API tokens** page, which also shows a copy-paste Claude Desktop config (the header goes through an env variable because some clients split arguments on spaces) and a `claude mcp add` command for Claude Code:
 
 ```json
 {
@@ -241,8 +241,8 @@ The web UI and MCP use the same pipeline:
     "artifact-hub": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://<app>.up.railway.app/mcp",
-               "--header", "Authorization:Bearer ${ARTIFACT_HUB_TOKEN}"],
-      "env": { "ARTIFACT_HUB_TOKEN": "ah_..." }
+               "--header", "Authorization:${ARTIFACT_HUB_AUTH}"],
+      "env": { "ARTIFACT_HUB_AUTH": "Bearer ah_..." }
     }
   }
 }
@@ -489,6 +489,7 @@ AI_TIMEOUT_MS=8000, AI_CIRCUIT_FAILURE_THRESHOLD=5, AI_CIRCUIT_COOLDOWN_SECONDS=
 RATE_LIMIT_LOGIN_PER_IP=20, RATE_LIMIT_LOGIN_PER_EMAIL=10, RATE_LIMIT_LOGIN_WINDOW_SECONDS=900
 RATE_LIMIT_USER_SEARCH_PER_MINUTE=60   (per user, share dialog autocomplete)
 RATE_LIMIT_SHARE_LINK_PER_MINUTE=120   (per client IP, share link page and content)
+RATE_LIMIT_API_TOKEN_PER_MINUTE=120    (per user, requests authenticated with an API token)
 RATE_LIMIT_* (upload, ai: added with those features)
 SEED_DEMO=true
 ```
@@ -551,7 +552,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 17. ✅ Feedback panel with the version filter. (Feedback is the first, default tab; the comment box comes first, then *Show feedback for:* this version / all versions; open and resolved threads together, oldest first, with replies folded until opened; comments are plain text with `http(s)` links opening in a new tab.)
 
 **MCP**
-18. API tokens, the Settings page and the Bearer guard.
+18. ✅ API tokens, the Settings page and Bearer authentication. (Tokens are `ah_` + 256 random bits, stored as SHA-256, at most 20 live per user, revoked by their owner only. Token routes need a session, so a token can't mint tokens. Authentication is one global `AuthGuard` running a `RequestAuthenticator` per scheme (session, API token), registered with `AuthModule.register`; routes accept a session unless `@Auth('api_token')` says otherwise, and requests with a token are rate limited per user. Invalid credentials are refused even if another accepted scheme would pass. Settings shows the secret once and fills it into the Claude Desktop and Claude Code setup.)
 19. MCP server with the read tools: `find_artifacts`, `get_artifact`, `get_feedback`.
 20. MCP write tools with inline text content.
 21. Upload sessions: browser upload page first, then the direct `PUT`.

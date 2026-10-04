@@ -5,6 +5,7 @@ import { ArtifactPage } from './artifact-page.tsx';
 import { GalleryPage } from './gallery-page.tsx';
 import { LoginPage } from './login-page.tsx';
 import { NotFoundPage } from './not-found-page.tsx';
+import { SettingsPage } from './settings-page.tsx';
 import { SharedLinkPage } from './shared-link-page.tsx';
 import { SignupPage } from './signup-page.tsx';
 
@@ -27,6 +28,7 @@ export const routes: RouteObject[] = [
         children: [
           { index: true, element: <GalleryPage /> },
           { path: 'artifacts/:id', element: <ArtifactPage /> },
+          { path: 'settings', element: <SettingsPage /> },
           { path: '*', element: <NotFoundPage /> },
         ],
       },

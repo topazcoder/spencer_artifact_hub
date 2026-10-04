@@ -8,12 +8,14 @@ export const LOGIN_IP_THROTTLER = 'login-ip';
 export const LOGIN_EMAIL_THROTTLER = 'login-email';
 export const USER_SEARCH_THROTTLER = 'user-search';
 export const SHARE_LINK_THROTTLER = 'share-link';
+export const API_TOKEN_THROTTLER = 'api-token';
 
 const THROTTLERS = [
   LOGIN_IP_THROTTLER,
   LOGIN_EMAIL_THROTTLER,
   USER_SEARCH_THROTTLER,
   SHARE_LINK_THROTTLER,
+  API_TOKEN_THROTTLER,
 ] as const;
 
 type ThrottlerName = (typeof THROTTLERS)[number];
@@ -37,7 +39,7 @@ function emailTracker(req: Record<string, unknown>): string {
   return typeof email === 'string' ? `email:${email.trim().toLowerCase()}` : `ip:${ip}`;
 }
 
-/** Counts per signed-in user (the session guard runs first), falling back to the IP. */
+/** Counts per signed-in user (the global `AuthGuard` runs first), falling back to the IP. */
 function userTracker(req: Record<string, unknown>): string {
   const { auth, ip } = req as unknown as Request;
   return auth ? `user:${auth.actor.userId}` : `ip:${ip}`;
@@ -73,6 +75,12 @@ function userTracker(req: Record<string, unknown>): string {
               name: SHARE_LINK_THROTTLER,
               ttl: seconds(60),
               limit: env.RATE_LIMIT_SHARE_LINK_PER_MINUTE,
+            },
+            {
+              name: API_TOKEN_THROTTLER,
+              ttl: seconds(60),
+              limit: env.RATE_LIMIT_API_TOKEN_PER_MINUTE,
+              getTracker: userTracker,
             },
           ],
         };
