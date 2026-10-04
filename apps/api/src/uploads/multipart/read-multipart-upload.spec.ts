@@ -80,9 +80,11 @@ describe('readMultipartUpload', () => {
     });
   });
 
-  it('rejects requests that are not multipart', async () => {
+  it('rejects requests that are not multipart, once their body has arrived', async () => {
     const req = fakeRequest({ 'content-type': 'application/json' });
-    await expect(read(req)).rejects.toMatchObject({ code: ErrorCode.BAD_REQUEST });
+    const upload = read(req);
+    send(req, '{"title":"x"}');
+    await expect(upload).rejects.toMatchObject({ code: ErrorCode.BAD_REQUEST });
   });
 
   it('rejects a Content-Length over the limit before reading the body', async () => {

@@ -15,8 +15,8 @@ export interface MultipartUpload {
     filename: string;
   };
   /**
-   * Stops parsing and drains the rest of the request, so an error response still reaches
-   * the client. Call it when the upload is rejected before `file.stream` has been consumed.
+   * Stops parsing and drains the rest of the request; respond once it resolves, so the error
+   * response reaches the client, proxies included. Call it when the upload is rejected.
    */
-  discard(): void;
+  discard(): Promise<void>;
 }

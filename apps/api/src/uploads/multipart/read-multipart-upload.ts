@@ -3,6 +3,7 @@ import { ErrorCode } from '@artifact-hub/shared';
 import busboy from 'busboy';
 import { AppError } from '../../common/errors/app-error.js';
 import { ByteMeter } from '../content/byte-meter.js';
+import { drainRequest } from '../drain-request.js';
 import type { MultipartUpload, MultipartUploadOptions } from './multipart.types.js';
 
 /** The form field that carries the file. */
@@ -24,8 +25,9 @@ export function readMultipartUpload(
   const maxRequestBytes = maxFileBytes + MULTIPART_OVERHEAD_BYTES;
 
   // Browsers always send Content-Length for FormData: reject before reading anything.
+  // Not drained: that would mean reading all of it. Browsers check the size first anyway.
   if (Number(req.headers['content-length']) > maxRequestBytes) {
-    discard(req);
+    req.resume();
     return Promise.reject(ByteMeter.tooLarge(maxFileBytes));
   }
 
@@ -36,8 +38,9 @@ export function readMultipartUpload(
       limits: { files: 1, fields: MAX_FIELDS, fieldSize: MAX_FIELD_BYTES, parts: MAX_FIELDS + 1 },
     });
   } catch {
-    discard(req);
-    return Promise.reject(badRequest('Send the file as multipart/form-data.'));
+    return drainRequest(req, maxRequestBytes).then(() =>
+      Promise.reject(badRequest('Send the file as multipart/form-data.')),
+    );
   }
 
   return new Promise((resolve, reject) => {
@@ -46,13 +49,12 @@ export function readMultipartUpload(
 
     const stop = () => {
       req.unpipe(parser);
-      discard(req);
+      return drainRequest(req, maxRequestBytes);
     };
     const fail = (error: AppError) => {
       if (settled) return;
       settled = true;
-      stop();
-      reject(error);
+      void stop().then(() => reject(error));
     };
 
     parser.on('field', (name, value, info) => {
@@ -81,16 +83,6 @@ export function readMultipartUpload(
     });
     req.pipe(parser);
   });
-}
-
-/**
- * Reads and drops the rest of the request, so the error response reaches the client instead
- * of a connection reset. Node's `requestTimeout` (5 min) bounds how long a client can keep
- * sending.
- */
-function discard(req: IncomingMessage): void {
-  if (req.complete || req.destroyed) return;
-  req.resume();
 }
 
 function badRequest(message: string): AppError {

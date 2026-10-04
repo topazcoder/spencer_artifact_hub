@@ -9,7 +9,7 @@ export function unsupported(reason: UnsupportedContentReason, explanation?: stri
   const details: UnsupportedContentDetails = { reason, allowed: ARTIFACT_MIME_TYPES };
   return new AppError(
     ErrorCode.UNSUPPORTED_TYPE,
-    `${explanation ? `${explanation} ` : ''}Supported formats: ${ALLOWED_DESCRIPTION}.`,
+    `${explanation ?? "This type of file isn't supported."} Supported formats: ${ALLOWED_DESCRIPTION}.`,
     details,
   );
 }

@@ -78,7 +78,7 @@ export class ArtifactsController {
       });
       return { artifact: toArtifactDto(artifact) };
     } catch (error) {
-      upload.discard();
+      await upload.discard();
       throw error;
     }
   }
@@ -99,7 +99,7 @@ export class ArtifactsController {
       });
       return { artifact: toArtifactDto(artifact) };
     } catch (error) {
-      upload.discard();
+      await upload.discard();
       throw error;
     }
   }
