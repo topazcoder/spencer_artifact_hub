@@ -23,6 +23,12 @@ export interface StoredContent {
   originalFilename: string | null;
 }
 
+/** What tells two versions' contents apart: the same bytes read as the same type. */
+export interface ContentIdentity {
+  sha256: string;
+  mimeType: ArtifactMimeType;
+}
+
 /** A version's content, ready to stream once the caller knows it needs the body. */
 export interface ArtifactContent {
   artifact: Artifact;

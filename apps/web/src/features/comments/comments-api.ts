@@ -35,15 +35,18 @@ export async function fetchCommentThreads(
   ).items;
 }
 
+/** With the same `idempotencyKey`, a retry returns the comment the first attempt posted. */
 export async function createComment(
   artifactId: string,
   body: CreateCommentRequest,
+  idempotencyKey?: string,
 ): Promise<Comment> {
   return (
     await apiRequest(commentsPath(artifactId), {
       method: 'POST',
       body,
       schema: commentResponseSchema,
+      idempotencyKey,
     })
   ).comment;
 }

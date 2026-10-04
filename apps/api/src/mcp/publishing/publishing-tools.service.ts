@@ -24,7 +24,12 @@ import { defineTool } from '../define-tool.js';
 import type { McpTool, McpToolProvider } from '../mcp.types.js';
 import { typeName } from '../type-names.js';
 import { UploadSessionsService } from '../../uploads/sessions/upload-sessions.service.js';
-import { formatForRevision, inlineContent, inlineContentError } from './inline-content.js';
+import {
+  formatForRevision,
+  inlineContent,
+  inlineContentError,
+  inlineContentIdentity,
+} from './inline-content.js';
 import { uploadInstructions } from './upload-instructions.js';
 
 const FORMATS = Object.keys(TEXT_FORMAT_MIME_TYPES) as [TextFormat, ...TextFormat[]];
@@ -36,6 +41,9 @@ const tags = z
   .min(1)
   .max(ARTIFACT_TAGS_MAX);
 const content = z.string().min(1);
+
+/** A repeated publish of the same content within this time returns the first artifact. */
+export const PUBLISH_DEDUPE_WINDOW_MS = 10 * 60_000;
 
 const METADATA_ADVICE =
   'Write it from what you know about the content and the conversation: it is how people find the artifact in the gallery and in search.';
@@ -101,6 +109,22 @@ export class PublishingToolsService implements McpToolProvider {
             'Say which format content is in: html, svg or markdown.',
           );
         }
+        // An agent may call again after a timeout or a lost answer: don't publish twice.
+        const published = await this.artifacts.findRecentPublish(
+          actor,
+          inlineContentIdentity(input.content, format),
+          PUBLISH_DEDUPE_WINDOW_MS,
+        );
+        if (published) {
+          return {
+            artifact: this.summary(published),
+            deduplicated: true,
+            next_actions: [
+              'This content was already published in the last few minutes, as this artifact, so it was not published again. Give the user the url.',
+              'If its title, description or tags should be different, call update_artifact.',
+            ],
+          };
+        }
         const view = await this.artifacts
           .create(actor, metadata, inlineContent(input.content, format))
           .catch((error: unknown) => {
@@ -108,6 +132,7 @@ export class PublishingToolsService implements McpToolProvider {
           });
         return {
           artifact: this.summary(view),
+          deduplicated: false,
           next_actions: [
             'Give the user the url.',
             'It is private: call share_artifact to share it with people, the company or a link.',
@@ -180,13 +205,13 @@ export class PublishingToolsService implements McpToolProvider {
 
         const changes = detailsGiven ? updateArtifactRequestSchema.parse(details) : null;
         // Content first: if it is refused, the details stay as they were too.
-        const versioned =
+        const revision =
           input.content === undefined
             ? null
-            : await this.addVersion(actor, ref.id, input.content, input.format, input.change_note);
+            : await this.revise(actor, ref.id, input.content, input.format, input.change_note);
         const view = changes
           ? await this.artifacts.update(actor, ref.id, changes)
-          : (versioned ?? (await this.artifacts.get(actor, ref.id)));
+          : (revision?.view ?? (await this.artifacts.get(actor, ref.id)));
 
         if (input.request_upload) {
           const upload = await this.uploads.issue(actor, ref.id, { changeNote: input.change_note });
@@ -197,28 +222,43 @@ export class PublishingToolsService implements McpToolProvider {
             ...uploadInstructions(this.env.APP_BASE_URL, upload),
           };
         }
+        const unchanged = revision?.unchanged ?? false;
         return {
           artifact: this.summary(view),
-          new_version: versioned ? view.latestVersionNo : null,
+          new_version: revision && !unchanged ? view.latestVersionNo : null,
+          unchanged,
           changed_details: changes ? Object.keys(changes) : [],
-          next_actions: ['Give the user the url.'],
+          next_actions: [
+            ...(unchanged
+              ? [
+                  `The content is the same as the current version (${view.latestVersionNo}), so no new version was added.`,
+                ]
+              : []),
+            'Give the user the url.',
+          ],
         };
       },
     });
   }
 
-  private async addVersion(
+  /**
+   * Adds `text` as the next version, unless it is the same as the current one (`unchanged`):
+   * an agent may send the same revision again after a timeout or a lost answer.
+   */
+  private async revise(
     actor: Actor,
     artifactId: string,
     text: string,
     format: TextFormat | undefined,
     changeNote: string | undefined,
-  ): Promise<ArtifactView> {
-    const current = format
-      ? null
-      : (await this.artifacts.getForAction(actor, artifactId, 'edit')).currentVersion;
-    const textFormat = formatForRevision(format, current);
-    return this.artifacts
+  ): Promise<{ view: ArtifactView; unchanged: boolean }> {
+    const current = await this.artifacts.getForAction(actor, artifactId, 'edit');
+    const textFormat = formatForRevision(format, current.currentVersion);
+    const { sha256, mimeType } = inlineContentIdentity(text, textFormat);
+    if (current.currentVersion?.sha256 === sha256 && current.currentVersion.mimeType === mimeType) {
+      return { view: current, unchanged: true };
+    }
+    const view = await this.artifacts
       .addVersion(
         actor,
         artifactId,
@@ -228,6 +268,7 @@ export class PublishingToolsService implements McpToolProvider {
       .catch((error: unknown) => {
         throw inlineContentError(error, textFormat);
       });
+    return { view, unchanged: false };
   }
 
   /** What publish and update tell the agent about the artifact, as it now is. */

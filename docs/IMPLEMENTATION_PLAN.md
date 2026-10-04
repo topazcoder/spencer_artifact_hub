@@ -145,8 +145,9 @@ ai_jobs
   status enum('pending','running','done','failed'), attempts, last_error, created_at, updated_at
 
 idempotency_keys
-  key, user_id, route, request_hash, response_status, response_body jsonb,
-  created_at, PK(user_id, key)                -- TTL 24h, pruned on schedule
+  user_id FK, key uuid, route, request_hash char(64) NULL, resource_id uuid NULL (NULL = in progress),
+  created_at, PK(user_id, key)                -- TTL 24h, pruned on schedule; no response copy:
+                                              -- a replay answers with resource_id as it is now
 ```
 
 No separate activity/audit table: version history (`artifact_versions`), comments (`comments`) and share lifecycle (`shares.created_at / revoked_at`) already record who did what and when. Security-relevant events go to structured logs (section 11).
@@ -338,7 +339,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 ### Idempotency (critical write paths)
 | Operation | Mechanism |
 |---|---|
-| Web publish / new version / comment / share create | `Idempotency-Key` header (UUID generated per form submission). Stored with the request hash and response; a replay returns the stored response; same key with a different body → `409` |
+| Web publish / new version / comment | `Idempotency-Key` header (UUID generated per form submission, kept across retries). Stored with the request hash and what the request created; a replay returns that resource as it is now; same key with a different body or route, or while the first request is running → `409`. Sharing with people needs none: it updates the person's row |
 | MCP publish | Dedupe on `(owner, sha256)` within 10 min → return the existing artifact with `"deduplicated": true` |
 | MCP update with content | If `sha256` equals the current version's → no new version; return current with `"unchanged": true` |
 | MCP add_comment | Dedupe identical `(author, version, parent, body)` within 2 min |
@@ -558,7 +559,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 21. ✅ Upload sessions: browser upload page first, then the direct `PUT`. (`publish_artifact` without `content` creates a draft and an upload; `update_artifact` with `request_upload` asks for the next version, with its change note. Both return `upload.url`, `upload.command`, `upload.expires_at` and what to do next. `uploads/sessions/` is its own module, because `ArtifactsModule` already imports `UploadsModule`. Finishing an upload is `addVersion` on the artifact, which publishes a draft. The session is consumed with one conditional `UPDATE`, released if the pipeline refuses the file, and a repeat after success returns the artifact without reading the new body. Someone else's token or session gets a 404. `PUT` takes only an API token and the raw body (a body a parser already read is refused); the page uses the session cookie. The `/upload/:token` page covers open, uploaded, already uploaded, expired and unknown links, and signed-out users come back to it after logging in. Found while testing it: every rejected upload (this page, `PUT`, and the existing publish and new-version uploads) is now answered only after the rest of its body has arrived, up to the size limit. Answering while the client was still sending made proxies (Vite's dev proxy, a hosting edge) return an empty 502 instead of the reason.)
 
 **Hardening**
-22. `Idempotency-Key` header and MCP dedupe.
+22. ✅ `Idempotency-Key` header and MCP dedupe. (`common/idempotency/`: `IdempotencyService.run` claims the key with one `INSERT … ON CONFLICT`, which also takes over a key older than 24 h, then does the work; the key is released if it fails, so only success is remembered. A repeat while the first is running, or with another route or body, is a `409`. The fingerprint is a hash of the validated input as canonical JSON; for uploads, of the metadata and the filename, not the file's bytes (only a bug in our own client could reuse a key for another file). Replays answer with the resource as it is now (like an upload session's repeat), with `Idempotent-Replayed: true`, so the table keeps no copies of responses. The web app sends a key per submission (`submissionKey`, one per mutation variables object) on publish, new version and comment, and retries those on network and server errors. Sharing with people takes no key: sharing again only updates the person's row. MCP: `publish_artifact` returns the user's artifact whose v1 has the same bytes and format from the last 10 minutes (`deduplicated: true`); `update_artifact` adds no version when the content equals the current version (`unchanged: true`), still applying new details; `add_comment` returns the same comment (author, version, parent, body) from the last 2 minutes.)
 23. Sweeper.
 
 **AI**

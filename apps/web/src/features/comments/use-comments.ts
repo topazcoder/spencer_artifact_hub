@@ -8,6 +8,8 @@ import {
   fetchCommentThreads,
   updateComment,
 } from './comments-api.ts';
+import { submissionKey } from '@/lib/api/submission-key.ts';
+import { retryTransient } from '@/lib/query-client.ts';
 
 /** One version's threads, or every version's (`versionNo` null). */
 export function useCommentThreads(artifactId: string, versionNo: number | null) {
@@ -26,17 +28,21 @@ export function useCommentThreads(artifactId: string, versionNo: number | null) 
 function useCommentChange<TInput, TResult>(
   artifactId: string,
   change: (input: TInput) => Promise<TResult>,
+  { retry = false }: { retry?: typeof retryTransient | false } = {},
 ) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: change,
+    retry,
     onSettled: () => queryClient.invalidateQueries({ queryKey: commentsQueryKey(artifactId) }),
   });
 }
 
 export function useCreateComment(artifactId: string) {
-  return useCommentChange(artifactId, (body: CreateCommentRequest) =>
-    createComment(artifactId, body),
+  return useCommentChange(
+    artifactId,
+    (body: CreateCommentRequest) => createComment(artifactId, body, submissionKey(body)),
+    { retry: retryTransient },
   );
 }
 

@@ -51,16 +51,25 @@ export async function fetchArtifactTags(
   ).items;
 }
 
-/** Multipart upload: the metadata first, then the file (the server reads them in that order). */
+/**
+ * Multipart upload: the metadata first, then the file (the server reads them in that order).
+ * With the same `idempotencyKey`, a retry returns the artifact the first attempt published.
+ */
 export async function publishArtifact(
   file: File,
   metadata: CreateArtifactRequest,
+  idempotencyKey?: string,
 ): Promise<Artifact> {
   const form = new FormData();
   form.append('metadata', JSON.stringify(metadata));
   form.append('file', file);
   return (
-    await apiRequest('/artifacts', { method: 'POST', body: form, schema: artifactResponseSchema })
+    await apiRequest('/artifacts', {
+      method: 'POST',
+      body: form,
+      schema: artifactResponseSchema,
+      idempotencyKey,
+    })
   ).artifact;
 }
 
@@ -80,6 +89,7 @@ export async function publishVersion(
   id: string,
   file: File,
   metadata: CreateVersionRequest,
+  idempotencyKey?: string,
 ): Promise<Artifact> {
   const form = new FormData();
   form.append('metadata', JSON.stringify(metadata));
@@ -89,6 +99,7 @@ export async function publishVersion(
       method: 'POST',
       body: form,
       schema: artifactResponseSchema,
+      idempotencyKey,
     })
   ).artifact;
 }

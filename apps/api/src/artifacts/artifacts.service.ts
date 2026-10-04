@@ -39,6 +39,7 @@ import type {
   ArtifactListOptions,
   ArtifactPage,
   ArtifactView,
+  ContentIdentity,
   NewContent,
   ResolvedArtifact,
   StoredContent,
@@ -121,6 +122,30 @@ export class ArtifactsService {
     });
     this.logger.info({ userId: actor.userId, artifactId, via: actor.via }, 'Draft created');
     return this.get(actor, artifactId);
+  }
+
+  /**
+   * The actor's artifact whose first version has exactly this content and was published in
+   * the last `withinMs`, if it is still there: MCP answers a repeated publish with it.
+   */
+  async findRecentPublish(
+    actor: Actor,
+    { sha256, mimeType }: ContentIdentity,
+    withinMs: number,
+  ): Promise<ArtifactView | null> {
+    const version = await this.versions
+      .createQueryBuilder('version')
+      .innerJoin(Artifact, 'artifact', 'artifact.id = version.artifactId')
+      .where('version.createdBy = :userId AND artifact.ownerId = :userId', {
+        userId: actor.userId,
+      })
+      .andWhere('version.versionNo = 1 AND version.sha256 = :sha256', { sha256 })
+      .andWhere('version.mimeType = :mimeType', { mimeType })
+      .andWhere('version.createdAt > :since', { since: new Date(Date.now() - withinMs) })
+      .andWhere('artifact.deletedAt IS NULL')
+      .orderBy('version.createdAt', 'DESC')
+      .getOne();
+    return version ? this.get(actor, version.artifactId) : null;
   }
 
   /**

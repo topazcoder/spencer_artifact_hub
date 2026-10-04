@@ -6,7 +6,7 @@ import {
   type UpdateCommentOptions,
 } from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { In, IsNull, type Repository } from 'typeorm';
+import { In, IsNull, MoreThan, type Repository } from 'typeorm';
 import { z } from 'zod';
 import { AccessPolicyService } from '../access/access-policy.service.js';
 import type { AccessTarget } from '../access/access.types.js';
@@ -18,6 +18,8 @@ import { AppError } from '../common/errors/app-error.js';
 import { Comment } from './comment.entity.js';
 import type {
   CommentListOptions,
+  CreateCommentBehaviour,
+  CreatedComment,
   CommentThreadView,
   CommentView,
   VisibleComment,
@@ -81,13 +83,15 @@ export class CommentsService {
 
   /**
    * Adds a comment on `versionNo` (by default the newest version the actor can see), or a reply
-   * to a top-level comment, on that comment's version.
+   * to a top-level comment, on that comment's version. With `dedupeWithinMs`, the actor's
+   * same comment (same version, parent and body) from that recently is returned instead.
    */
   async create(
     actor: Actor,
     artifactId: string,
     { body, versionNo, parentId }: CreateCommentOptions,
-  ): Promise<CommentView> {
+    { dedupeWithinMs }: CreateCommentBehaviour = {},
+  ): Promise<CreatedComment> {
     const view = await this.artifacts.getForAction(actor, artifactId, 'comment');
     const parent =
       parentId === undefined ? null : await this.parentToReplyTo(actor, view, parentId);
@@ -97,6 +101,29 @@ export class CommentsService {
       ]);
     }
     const version = parent?.version ?? (await this.versionToCommentOn(actor, view, versionNo));
+
+    if (dedupeWithinMs !== undefined) {
+      const repeated = await this.comments.findOne({
+        where: {
+          artifactId: view.artifact.id,
+          versionId: version.id,
+          parentId: parent?.id ?? IsNull(),
+          authorId: actor.userId,
+          body,
+          deletedAt: IsNull(),
+          createdAt: MoreThan(new Date(Date.now() - dedupeWithinMs)),
+        },
+        relations: { author: true, version: true },
+        order: { createdAt: 'DESC' },
+      });
+      if (repeated) {
+        this.logger.info(
+          { userId: actor.userId, artifactId: view.artifact.id, commentId: repeated.id },
+          'Repeated comment not posted again',
+        );
+        return { ...this.toView(actor, repeated, view.target), deduplicated: true };
+      }
+    }
 
     const inserted = await this.comments.insert({
       artifactId: view.artifact.id,
@@ -122,7 +149,13 @@ export class CommentsService {
       where: { id },
       relations: { author: true, version: true },
     });
-    return this.toView(actor, comment, view.target);
+    return { ...this.toView(actor, comment, view.target), deduplicated: false };
+  }
+
+  /** A comment the actor can see (`NOT_FOUND` otherwise). */
+  async get(actor: Actor, commentId: string): Promise<CommentView> {
+    const { comment, artifact } = await this.visibleComment(actor, commentId);
+    return this.toView(actor, comment, artifact.target);
   }
 
   /** Changes the body, or resolves or reopens a top-level comment. Author only. */

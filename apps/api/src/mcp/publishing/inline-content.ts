@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import {
   ErrorCode,
@@ -6,7 +7,7 @@ import {
   type TextFormat,
 } from '@artifact-hub/shared';
 import type { ArtifactVersion } from '../../artifacts/artifact-version.entity.js';
-import type { NewContent } from '../../artifacts/artifacts.types.js';
+import type { ContentIdentity, NewContent } from '../../artifacts/artifacts.types.js';
 import { AppError } from '../../common/errors/app-error.js';
 import type {
   UnsupportedContentDetails,
@@ -16,6 +17,17 @@ import type {
 /** Text sent inline by an MCP client, for the upload pipeline (which checks size and type). */
 export function inlineContent(content: string, textFormat: TextFormat): NewContent {
   return { stream: Readable.from([Buffer.from(content, 'utf8')]), textFormat };
+}
+
+/**
+ * What the stored version of inline text will be, to compare it with versions already there
+ * before storing it again: the hash of its UTF-8 bytes, and its format's type.
+ */
+export function inlineContentIdentity(content: string, textFormat: TextFormat): ContentIdentity {
+  return {
+    sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+    mimeType: TEXT_FORMAT_MIME_TYPES[textFormat],
+  };
 }
 
 /**

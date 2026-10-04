@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { artifactResponseSchema } from '@artifact-hub/shared';
 import request from 'supertest';
+import { DataSource } from 'typeorm';
 import { createTestApp } from './create-test-app.js';
 import { callTool, mcpClients } from './mcp-client.js';
 import { fixtures } from './fixtures/content.js';
@@ -40,7 +41,7 @@ describe('MCP server (e2e)', () => {
   });
 
   const http = () => request(app.getHttpServer());
-  const send = (method: 'post' | 'patch', user: TestUser, path: string) =>
+  const send = (method: 'post' | 'patch' | 'delete', user: TestUser, path: string) =>
     http()[method](`/api${path}`).set('Origin', TEST_ORIGIN).set('Cookie', user.cookie);
 
   const tokenFor = (user: TestUser) => mcp.tokenFor(user);
@@ -82,7 +83,8 @@ describe('MCP server (e2e)', () => {
       description: 'Three plans side by side.',
       tags: ['Pricing', runTag],
       format: 'html',
-      content: '<!DOCTYPE html><html><body><h1>Plans</h1></body></html>',
+      // Unique, or publishing it again would return the same artifact (dedupe).
+      content: `<!DOCTYPE html><html><body><h1>Plans</h1><!-- ${randomUUID()} --></body></html>`,
       ...args,
     });
     expect(result.isError).toBe(false);
@@ -445,6 +447,90 @@ describe('MCP server (e2e)', () => {
       expect(result).toMatchObject({ isError: true, text: expect.stringMatching(/Send content/) });
     });
 
+    it('returns the same artifact when the same content is published again', async () => {
+      const client = await connect(ada);
+      const content = `# Retro notes ${randomUUID()}\n`;
+      const first = await published(client, { format: 'markdown', content });
+      const again = await call(client, 'publish_artifact', {
+        title: 'Retro notes',
+        description: 'Sent again after a timeout.',
+        tags: [runTag],
+        format: 'markdown',
+        content,
+      });
+      expect(again.data).toMatchObject({
+        deduplicated: true,
+        artifact: { id: first.id, title: 'Pricing mockup', version: { number: 1 } },
+        next_actions: expect.arrayContaining([expect.stringMatching(/update_artifact/)]),
+      });
+
+      // Not for someone else, nor as another format, nor once it is deleted.
+      const byBob = await published(await connect(bob), { format: 'markdown', content });
+      expect(byBob.id).not.toBe(first.id);
+      const asHtml = `<!DOCTYPE html><html><body>${randomUUID()}</body></html>`;
+      const page = await published(client, { format: 'html', content: asHtml });
+      const asMarkdown = await published(client, { format: 'markdown', content: asHtml });
+      expect(asMarkdown.id).not.toBe(page.id);
+      await send('delete', ada, `/artifacts/${first.id}`).expect(204);
+      const afterDelete = await call(client, 'publish_artifact', {
+        title: 'Retro notes',
+        description: 'Published again.',
+        tags: [runTag],
+        format: 'markdown',
+        content,
+      });
+      expect(afterDelete.data).toMatchObject({ deduplicated: false });
+      expect((afterDelete.data.artifact as unknown as { id: string }).id).not.toBe(first.id);
+    });
+
+    it('publishes the same content again after the dedupe window', async () => {
+      const client = await connect(ada);
+      const content = `# Weekly report ${randomUUID()}\n`;
+      const first = await published(client, { format: 'markdown', content });
+      await app
+        .get(DataSource)
+        .query(
+          `UPDATE artifact_versions SET created_at = now() - interval '11 minutes' WHERE artifact_id = $1`,
+          [first.id],
+        );
+      const again = await call(client, 'publish_artifact', {
+        title: 'Weekly report',
+        description: 'Next week, same text.',
+        tags: [runTag],
+        format: 'markdown',
+        content,
+      });
+      expect(again.data).toMatchObject({ deduplicated: false });
+      expect((again.data.artifact as unknown as { id: string }).id).not.toBe(first.id);
+    });
+
+    it('adds no version for content that is the same as the current version', async () => {
+      const client = await connect(ada);
+      const content = `<!DOCTYPE html><html><body>${randomUUID()}</body></html>`;
+      const { id } = await published(client, { content });
+      const result = await call(client, 'update_artifact', {
+        artifact: id,
+        content,
+        change_note: 'Sent again',
+        title: 'Renamed anyway',
+      });
+      expect(result.data).toMatchObject({
+        unchanged: true,
+        new_version: null,
+        changed_details: ['title'],
+        artifact: { title: 'Renamed anyway', version: { number: 1, change_note: null } },
+        next_actions: expect.arrayContaining([expect.stringMatching(/same as the current/)]),
+      });
+
+      // The same text in another format is new content.
+      const asMarkdown = await call(client, 'update_artifact', {
+        artifact: id,
+        content,
+        format: 'markdown',
+      });
+      expect(asMarkdown.data).toMatchObject({ unchanged: false, new_version: 2 });
+    });
+
     it("can't change someone else's artifact, even with comment access", async () => {
       const { id } = await published(await connect(ada));
       await shareWith(ada, bob, id, 'comment');
@@ -496,6 +582,31 @@ describe('MCP server (e2e)', () => {
         body: 'Typo here',
         replies: [{ body: 'Fixed' }],
       });
+    });
+
+    it('does not post the same comment twice in a row', async () => {
+      const bobClient = await connect(bob);
+      const body = `Looks great ${randomUUID()}`;
+      const first = await call(bobClient, 'add_comment', { artifact: id, body });
+      const again = await call(bobClient, 'add_comment', { artifact: id, body });
+      const firstId = (first.data.comment as unknown as { id: string }).id;
+      expect(first.data).toMatchObject({ deduplicated: false });
+      expect(again.data).toMatchObject({ deduplicated: true, comment: { id: firstId } });
+
+      // On another version, or by someone else, it is a new comment.
+      const onV1 = await call(bobClient, 'add_comment', { artifact: id, body, version: 1 });
+      expect(onV1.data).toMatchObject({ deduplicated: false });
+      const byAda = await call(await connect(ada), 'add_comment', { artifact: id, body });
+      expect(byAda.data).toMatchObject({ deduplicated: false });
+
+      // And so it is once the window has passed.
+      await app
+        .get(DataSource)
+        .query(`UPDATE comments SET created_at = now() - interval '3 minutes' WHERE id = $1`, [
+          firstId,
+        ]);
+      const later = await call(bobClient, 'add_comment', { artifact: id, body });
+      expect(later.data).toMatchObject({ deduplicated: false });
     });
 
     it('says when the version to comment on does not exist', async () => {

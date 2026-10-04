@@ -43,6 +43,12 @@ Known limitations of the current build, and planned improvements.
 - Cap the in-memory store's size in the meantime (LRU), as a fallback when Redis is not configured.
 - Count only failed logins per email, reset the counter after a successful login, and use exponential backoff instead of a hard block, so a targeted lockout is short-lived.
 
+## Idempotency
+- MCP dedupe is a lookup before the insert, so two identical `publish_artifact` or `add_comment` calls arriving at the same moment can both go through. Retries come one after another, which it covers; a unique constraint or an advisory lock per `(owner, sha256)` would close the gap.
+- `publish_artifact` without content (a draft for an upload) isn't deduplicated: a repeat makes a second draft, which the sweeper removes if it's never uploaded.
+- An upload's `Idempotency-Key` fingerprint covers its metadata and filename, not the file's bytes: a repeat with the same key and another file gets the first result. Our client makes a new key per submission, so only a client bug could do this; hashing the file as it streams (and reading a repeat's file to compare) would catch it.
+- A request whose process dies mid-way leaves its key "in progress" until it expires (24 h); retries with that key get a `409`, and a new submission (new key) works. Taking over keys stuck in progress after a few minutes would remove that, at the risk of doing work twice.
+
 ## Storage and content
 - Implement the `s3` and `azure` `StorageDriver`s (interfaces already in place), with optional presigned download URLs.
 - Serve user content from a separate domain (`usercontent.<domain>`) as defense in depth beyond the CSP sandbox.

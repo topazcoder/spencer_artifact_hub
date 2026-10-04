@@ -5,5 +5,6 @@ export * from './auth.js';
 export * from './comments.js';
 export * from './errors.js';
 export * from './format.js';
+export * from './idempotency.js';
 export * from './sharing.js';
 export * from './upload-sessions.js';
