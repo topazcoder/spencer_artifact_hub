@@ -70,6 +70,7 @@ One production Docker image: it builds the shared package, the SPA and the API, 
 - Serve user content from a separate domain, and move storage to S3 or Azure so the app can scale past one replica.
 - OAuth for MCP clients, instead of pasting a token, once the auth approach settles.
 - Notifications when something is shared or commented on, and several named links per artifact.
+- A CI/CD pipeline: GitHub Actions running lint, typecheck, unit and e2e tests (against Postgres) and an image build on every pull request, then deploying `master` to Railway only when they pass, with a smoke test of the live URL.
 
 ## AI tools used
 
