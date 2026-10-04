@@ -1,4 +1,4 @@
-import { apiErrorBodySchema, ErrorCode } from '@artifact-hub/shared';
+import { apiErrorBodySchema, ErrorCode, IDEMPOTENCY_KEY_HEADER } from '@artifact-hub/shared';
 import { ApiError } from './api-error.ts';
 import type { ApiRequestOptions } from './api.types.ts';
 
@@ -12,7 +12,7 @@ const UNEXPECTED_RESPONSE_MESSAGE = 'The server sent an unexpected response. Ple
  */
 export async function apiRequest<T = void>(
   path: string,
-  { method = 'GET', body, schema, signal }: ApiRequestOptions<T> = {},
+  { method = 'GET', body, schema, signal, idempotencyKey }: ApiRequestOptions<T> = {},
 ): Promise<T> {
   const isJson = body !== undefined && !(body instanceof FormData);
   const res = await send(path, {
@@ -21,6 +21,7 @@ export async function apiRequest<T = void>(
     headers: {
       Accept: 'application/json',
       ...(isJson ? { 'Content-Type': 'application/json' } : {}),
+      ...(idempotencyKey ? { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey } : {}),
     },
     body: isJson ? JSON.stringify(body) : (body as FormData | undefined),
   });

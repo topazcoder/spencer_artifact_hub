@@ -16,6 +16,7 @@ pnpm monorepo: `apps/api` (NestJS), `apps/web` (React + Vite), `packages/shared`
 - Every route requires authentication (global `AuthGuard`): a session by default. `@Auth('api_token')` (or `@Auth('session', 'api_token')`) names the credentials a route accepts instead; opt out explicitly with `@Public()`. The guard fails closed for non-HTTP transports and for schemes without an authenticator.
 - Each kind of credentials is a `RequestAuthenticator` (`auth/auth.types.ts`). Sessions are built into `AuthModule`; others are registered in `app.module.ts` with `AuthModule.register({ imports, authenticators })`, so the auth module never imports them. A new scheme (e.g. OAuth for MCP) is a new authenticator, nothing else.
 - Handlers get the caller with `@CurrentActor()` and pass the `Actor` to services. Services decide authorization, never controllers.
+- Maintenance methods the sweeper calls (`deleteExpired()`, `deleteAbandonedDrafts()`, …) act for the system and take no `Actor`. Each lives in the service that owns the data, says "Maintenance, for the sweeper" in its doc comment, and is never called from a controller or MCP tool.
 - State-changing requests must come from `APP_BASE_URL` (global `CsrfGuard`, Origin/Referer check). e2e tests set `Origin: TEST_ORIGIN`.
 
 ### Errors, validation, data

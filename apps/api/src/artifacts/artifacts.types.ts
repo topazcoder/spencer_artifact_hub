@@ -23,6 +23,12 @@ export interface StoredContent {
   originalFilename: string | null;
 }
 
+/** What tells two versions' contents apart: the same bytes read as the same type. */
+export interface ContentIdentity {
+  sha256: string;
+  mimeType: ArtifactMimeType;
+}
+
 /** A version's content, ready to stream once the caller knows it needs the body. */
 export interface ArtifactContent {
   artifact: Artifact;
@@ -45,6 +51,12 @@ export interface ArtifactFilters {
   mimeTypes?: readonly ArtifactMimeType[];
   /** Only artifacts with this (normalized) tag. */
   tag?: string;
+  /** Only artifacts whose owner's display name contains this (any case), or whose owner has this email. */
+  owner?: string;
+  /** Only artifacts last updated on or after this day (UTC, `YYYY-MM-DD`). */
+  updatedFrom?: string;
+  /** Only artifacts last updated on or before this day (UTC, `YYYY-MM-DD`). */
+  updatedTo?: string;
 }
 
 export interface ArtifactListOptions extends ArtifactFilters {

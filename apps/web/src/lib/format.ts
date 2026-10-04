@@ -29,3 +29,17 @@ export function formatTimeUntil(date: Date | string, now: Date = new Date()): st
   if (days <= 7) return relative.format(days, 'day');
   return `on ${absolute.format(then)}`;
 }
+
+const day = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeZone: 'UTC' });
+const parseDay = (value: string) => new Date(`${value}T00:00:00Z`);
+
+/**
+ * "Updated Sep 28 – Oct 4, 2026", "Updated since Sep 28, 2026" or "Updated until Oct 4, 2026"
+ * for days given as `YYYY-MM-DD` (UTC, as the server filters them). Null without either.
+ */
+export function formatUpdatedRange(from?: string, to?: string): string | null {
+  if (from && to) return `Updated ${day.formatRange(parseDay(from), parseDay(to))}`;
+  if (from) return `Updated since ${day.format(parseDay(from))}`;
+  if (to) return `Updated until ${day.format(parseDay(to))}`;
+  return null;
+}

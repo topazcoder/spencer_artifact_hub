@@ -16,6 +16,7 @@
     "db:migration:revert": "nest build && typeorm migration:revert -d dist/database/data-source.cli.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@artifact-hub/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.0",
     "@nestjs/common": "^12.1.2",

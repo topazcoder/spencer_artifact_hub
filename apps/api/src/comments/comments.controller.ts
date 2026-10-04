@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
 import {
   type CommentListQuery,
@@ -20,15 +21,21 @@ import {
   createCommentRequestSchema,
   updateCommentRequestSchema,
 } from '@artifact-hub/shared';
+import type { Request } from 'express';
 import { CurrentActor } from '../auth/auth.decorators.js';
 import type { Actor } from '../auth/auth.types.js';
+import { IdempotencyService } from '../common/idempotency/idempotency.service.js';
+import { requestFingerprint } from '../common/idempotency/request-fingerprint.js';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe.js';
 import { toCommentDto, toCommentThreadDto } from './comment.entity.js';
 import { CommentsService } from './comments.service.js';
 
 @Controller()
 export class CommentsController {
-  constructor(private readonly comments: CommentsService) {}
+  constructor(
+    private readonly comments: CommentsService,
+    private readonly idempotency: IdempotencyService,
+  ) {}
 
   /** `?version=N` for one version's threads; `?include=open` leaves out resolved ones. */
   @Get('artifacts/:id/comments')
@@ -41,13 +48,24 @@ export class CommentsController {
     return { items: threads.map(toCommentThreadDto) };
   }
 
+  /** Takes an `Idempotency-Key`. */
   @Post('artifacts/:id/comments')
-  async create(
+  create(
     @CurrentActor() actor: Actor,
     @Param('id') artifactId: string,
     @Body(new ZodValidationPipe(createCommentRequestSchema)) options: CreateCommentOptions,
+    @Req() req: Request,
   ): Promise<CommentResponse> {
-    return { comment: toCommentDto(await this.comments.create(actor, artifactId, options)) };
+    return this.idempotency.run(req, actor, {
+      execute: async () => {
+        const view = await this.comments.create(actor, artifactId, options);
+        return { result: { comment: toCommentDto(view) }, resourceId: view.comment.id };
+      },
+      replay: async (commentId) => ({
+        comment: toCommentDto(await this.comments.get(actor, commentId)),
+      }),
+      fingerprint: requestFingerprint(options),
+    });
   }
 
   /** Edits the body, or resolves (`resolved: true`) or reopens a top-level comment. */

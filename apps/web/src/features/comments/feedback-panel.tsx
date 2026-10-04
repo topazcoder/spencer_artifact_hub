@@ -8,11 +8,13 @@ import { cn } from '@/lib/utils';
 import { CommentForm } from './comment-form.tsx';
 import { CommentThread } from './comment-thread.tsx';
 import type { FeedbackFilter } from './comments.types.ts';
+import { FeedbackSummaryDialog } from './feedback-summary-dialog.tsx';
 import { useCommentThreads, useCreateComment } from './use-comments.ts';
 
 /**
- * The Feedback tab: a box to add a comment for those who may comment, then the comments on the
- * version being viewed (`versionNo`) or on every version, resolved or not, oldest first.
+ * The Feedback tab: a box to add a comment for those who may comment, then a button for the AI
+ * summary (with AI on) and the comments on the version being viewed (`versionNo`) or on every version,
+ * resolved or not, oldest first.
  * `versionNo` is null when no version is shown; all comments are listed then.
  */
 export function FeedbackPanel({
@@ -72,6 +74,12 @@ export function FeedbackPanel({
           </div>
         </div>
       ) : null}
+
+      <FeedbackSummaryDialog
+        artifactId={artifact.id}
+        versionNo={shownVersionNo}
+        hasComments={(threads?.length ?? 0) > 0}
+      />
 
       {error && !threads ? (
         <InlineError error={error} onRetry={() => void refetch()} />

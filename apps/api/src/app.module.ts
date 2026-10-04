@@ -15,7 +15,9 @@ import type { Env } from './config/config.types.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
 import { McpModule } from './mcp/mcp.module.js';
+import { SearchModule } from './search/search.module.js';
 import { SharingModule } from './sharing/sharing.module.js';
+import { SweeperModule } from './sweeper/sweeper.module.js';
 import { UploadSessionsModule } from './uploads/sessions/upload-sessions.module.js';
 import { WebModule } from './web/web.module.js';
 
@@ -37,8 +39,10 @@ export class AppModule {
         ArtifactsModule,
         SharingModule,
         CommentsModule,
+        SearchModule,
         UploadSessionsModule,
         McpModule,
+        SweeperModule,
         ClientConfigModule,
         HealthModule,
         WebModule.register(env.WEB_DIST_DIR),

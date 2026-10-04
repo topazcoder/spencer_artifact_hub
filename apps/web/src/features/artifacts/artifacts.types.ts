@@ -9,6 +9,12 @@ export interface GalleryFilters {
   q?: string;
   type?: ArtifactTypeFilter;
   tag?: string;
+  /** Part of the owner's name, or their email. */
+  owner?: string;
+  /** Last updated on or after this day (`YYYY-MM-DD`, UTC). */
+  updatedFrom?: string;
+  /** Last updated on or before this day (`YYYY-MM-DD`, UTC). */
+  updatedTo?: string;
 }
 
 export interface ArtifactListParams extends GalleryFilters {

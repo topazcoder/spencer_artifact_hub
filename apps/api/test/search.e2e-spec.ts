@@ -42,7 +42,7 @@ describe('Search and filters (e2e)', () => {
 
   async function publish(
     user: TestUser,
-    metadata: { title: string; description?: string; tags?: string[] },
+    metadata: { title: string; description?: string; tags?: string[]; visibility?: 'public' },
     file: [Buffer, string] = [fixtures.markdown, 'notes.md'],
   ): Promise<string> {
     const res = await http()
@@ -164,6 +164,48 @@ describe('Search and filters (e2e)', () => {
         [`Deck ${word}`, `Mockup ${word}`].toSorted(),
       );
       expect(await titles(ada, { q: word, tag: 'q3', type: 'html' })).toEqual([`Mockup ${word}`]);
+    });
+
+    it('narrows by owner: part of their name, any case, or their exact email', async () => {
+      const sara = await users.create(`Sara ${word}`);
+      await publish(sara, { title: `Report ${word}`, visibility: 'public' });
+      await publish(ada, { title: `Notes ${word}`, visibility: 'public' });
+      const search = { q: word, scope: 'public' };
+
+      expect(await titles(bob, { ...search, owner: `SARA ${word.slice(0, 5)}` })).toEqual([
+        `Report ${word}`,
+      ]);
+      expect(await titles(bob, { ...search, owner: sara.email.toUpperCase() })).toEqual([
+        `Report ${word}`,
+      ]);
+      // Not the start of an email, and wildcards match only themselves.
+      expect(await titles(bob, { ...search, owner: sara.email.slice(0, 10) })).toEqual([]);
+      expect(await titles(bob, { ...search, owner: '%' })).toEqual([]);
+    });
+
+    it('narrows by the days it was last updated, inclusive (UTC)', async () => {
+      await app.get(DataSource).query(
+        `UPDATE artifacts SET updated_at = CASE
+           WHEN title = $1 THEN timestamptz '2026-01-15T23:30:00Z'
+           ELSE timestamptz '2026-01-16T00:30:00Z' END
+         WHERE title IN ($1, $2)`,
+        [`Deck ${word}`, `Mockup ${word}`],
+      );
+      expect(await titles(ada, { q: word, updatedTo: '2026-01-15' })).toEqual([`Deck ${word}`]);
+      expect(
+        await titles(ada, { q: word, updatedFrom: '2026-01-16', updatedTo: '2026-01-16' }),
+      ).toEqual([`Mockup ${word}`]);
+      expect(await titles(ada, { q: word, updatedFrom: '2026-01-16' })).not.toContain(
+        `Deck ${word}`,
+      );
+    });
+
+    it('rejects invalid dates', async () => {
+      await http()
+        .get('/api/artifacts')
+        .query({ updatedFrom: '2026-13-01' })
+        .set('Cookie', ada.cookie)
+        .expect(400);
     });
 
     it('rejects unknown types', async () => {

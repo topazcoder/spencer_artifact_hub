@@ -35,6 +35,8 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CurrentActor } from '../auth/auth.decorators.js';
 import type { Actor } from '../auth/auth.types.js';
 import { AppError } from '../common/errors/app-error.js';
+import { IdempotencyService } from '../common/idempotency/idempotency.service.js';
+import { requestFingerprint } from '../common/idempotency/request-fingerprint.js';
 import { ZodValidationPipe } from '../common/validation/zod-validation.pipe.js';
 import { InjectEnv } from '../config/config.module.js';
 import type { Env } from '../config/config.types.js';
@@ -42,7 +44,7 @@ import { readMultipartUpload } from '../uploads/multipart/read-multipart-upload.
 import { toArtifactVersionDto } from './artifact-version.entity.js';
 import { toArtifactDto } from './artifact.entity.js';
 import { ArtifactsService } from './artifacts.service.js';
-import type { ArtifactListOptions } from './artifacts.types.js';
+import type { ArtifactListOptions, ArtifactView, NewContent } from './artifacts.types.js';
 import { sendVersionContent } from './content/send-version-content.js';
 
 /** What each gallery scope narrows the list to. */
@@ -62,46 +64,35 @@ const METADATA_FIELD = 'metadata';
 export class ArtifactsController {
   constructor(
     private readonly artifacts: ArtifactsService,
+    private readonly idempotency: IdempotencyService,
     @InjectEnv() private readonly env: Env,
     @InjectPinoLogger(ArtifactsController.name) private readonly logger: PinoLogger,
   ) {}
 
-  /** Multipart: a `metadata` JSON field (`CreateArtifactRequest`), then the `file`. */
+  /**
+   * Multipart: a `metadata` JSON field (`CreateArtifactRequest`), then the `file`. Takes an
+   * `Idempotency-Key`.
+   */
   @Post()
-  async create(@CurrentActor() actor: Actor, @Req() req: Request): Promise<ArtifactResponse> {
-    const upload = await readMultipartUpload(req, { maxFileBytes: this.env.MAX_ARTIFACT_BYTES });
-    try {
-      const metadata = parseMetadata(upload.fields[METADATA_FIELD], createArtifactRequestSchema);
-      const artifact = await this.artifacts.create(actor, metadata, {
-        stream: upload.file.stream,
-        filename: upload.file.filename,
-      });
-      return { artifact: toArtifactDto(artifact) };
-    } catch (error) {
-      await upload.discard();
-      throw error;
-    }
+  create(@CurrentActor() actor: Actor, @Req() req: Request): Promise<ArtifactResponse> {
+    return this.receiveUpload(req, actor, createArtifactRequestSchema, (metadata, content) =>
+      this.artifacts.create(actor, metadata, content),
+    );
   }
 
-  /** Multipart: a `metadata` JSON field (`CreateVersionRequest`), then the `file`. */
+  /**
+   * Multipart: a `metadata` JSON field (`CreateVersionRequest`), then the `file`. Takes an
+   * `Idempotency-Key`.
+   */
   @Post(':id/versions')
-  async addVersion(
+  addVersion(
     @CurrentActor() actor: Actor,
     @Param('id') id: string,
     @Req() req: Request,
   ): Promise<ArtifactResponse> {
-    const upload = await readMultipartUpload(req, { maxFileBytes: this.env.MAX_ARTIFACT_BYTES });
-    try {
-      const metadata = parseMetadata(upload.fields[METADATA_FIELD], createVersionRequestSchema);
-      const artifact = await this.artifacts.addVersion(actor, id, metadata, {
-        stream: upload.file.stream,
-        filename: upload.file.filename,
-      });
-      return { artifact: toArtifactDto(artifact) };
-    } catch (error) {
-      await upload.discard();
-      throw error;
-    }
+    return this.receiveUpload(req, actor, createVersionRequestSchema, (metadata, content) =>
+      this.artifacts.addVersion(actor, id, metadata, content),
+    );
   }
 
   @Get(':id/versions')
@@ -118,12 +109,15 @@ export class ArtifactsController {
     @CurrentActor() actor: Actor,
     @Query(new ZodValidationPipe(artifactListQuerySchema)) query: ArtifactListQuery,
   ): Promise<ArtifactListResponse> {
-    const { scope, q, type, tag, page, pageSize } = query;
+    const { scope, q, type, tag, owner, updatedFrom, updatedTo, page, pageSize } = query;
     const { items, total } = await this.artifacts.list(actor, {
       ...SCOPE_FILTERS[scope](actor),
       search: q,
       mimeTypes: type ? ARTIFACT_TYPE_FILTERS[type] : undefined,
       tag,
+      owner,
+      updatedFrom,
+      updatedTo,
       page,
       pageSize,
     });
@@ -175,6 +169,39 @@ export class ArtifactsController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@CurrentActor() actor: Actor, @Param('id') id: string): Promise<void> {
     await this.artifacts.remove(actor, id);
+  }
+
+  /**
+   * Reads a multipart upload and hands its metadata and file to `publish`, once per
+   * `Idempotency-Key`. A repeat must send the same metadata and filename (the file itself is
+   * not compared), and gets the artifact as it is now.
+   */
+  private async receiveUpload<T extends z.ZodType>(
+    req: Request,
+    actor: Actor,
+    schema: T,
+    publish: (metadata: z.output<T>, content: NewContent) => Promise<ArtifactView>,
+  ): Promise<ArtifactResponse> {
+    const upload = await readMultipartUpload(req, { maxFileBytes: this.env.MAX_ARTIFACT_BYTES });
+    try {
+      const metadata = parseMetadata(upload.fields[METADATA_FIELD], schema);
+      const { stream, filename } = upload.file;
+      return await this.idempotency.run(req, actor, {
+        execute: async () => {
+          const view = await publish(metadata, { stream, filename });
+          return { result: { artifact: toArtifactDto(view) }, resourceId: view.artifact.id };
+        },
+        replay: async (artifactId) => ({
+          artifact: toArtifactDto(await this.artifacts.get(actor, artifactId)),
+        }),
+        // Answered once the rest has arrived, so the answer reaches clients behind proxies.
+        skip: () => upload.discard(),
+        fingerprint: requestFingerprint({ metadata, filename }),
+      });
+    } catch (error) {
+      await upload.discard();
+      throw error;
+    }
   }
 }
 

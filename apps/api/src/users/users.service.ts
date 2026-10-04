@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, type Repository } from 'typeorm';
 import type { Actor } from '../auth/auth.types.js';
+import { escapeLike } from '../database/escape-like.js';
 import { User } from './user.entity.js';
 
 const USER_SEARCH_LIMIT = 5;
@@ -23,7 +24,7 @@ export class UsersService {
    * picking people to share with. Prefix-only and capped, so it can't list every account.
    */
   search(actor: Actor, prefix: string, limit = USER_SEARCH_LIMIT): Promise<User[]> {
-    const pattern = `${prefix.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+    const pattern = `${escapeLike(prefix)}%`;
     return this.users
       .createQueryBuilder('user')
       .where('user.id != :me', { me: actor.userId })

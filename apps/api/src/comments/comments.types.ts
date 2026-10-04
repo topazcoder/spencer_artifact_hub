@@ -8,6 +8,16 @@ export interface CommentView {
   permissions: CommentPermissions;
 }
 
+/** A comment just posted, or the same one found posted recently (`deduplicated`). */
+export interface CreatedComment extends CommentView {
+  deduplicated: boolean;
+}
+
+export interface CreateCommentBehaviour {
+  /** Return the actor's same comment posted this recently, rather than posting it again. */
+  dedupeWithinMs?: number;
+}
+
 /** A top-level comment and its replies, oldest first. */
 export interface CommentThreadView extends CommentView {
   replies: CommentView[];

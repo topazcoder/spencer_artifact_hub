@@ -1,9 +1,15 @@
+import { createHash } from 'node:crypto';
 import type { ArtifactVersion } from '../../artifacts/artifact-version.entity.js';
 import { ErrorCode } from '@artifact-hub/shared';
 import { AppError } from '../../common/errors/app-error.js';
 import { ByteMeter } from '../../uploads/content/byte-meter.js';
 import { unsupported } from '../../uploads/content/unsupported-type.js';
-import { formatForRevision, inlineContent, inlineContentError } from './inline-content.js';
+import {
+  formatForRevision,
+  inlineContent,
+  inlineContentError,
+  inlineContentIdentity,
+} from './inline-content.js';
 
 const version = (mimeType: string) => ({ mimeType }) as ArtifactVersion;
 
@@ -14,6 +20,15 @@ describe('inlineContent', () => {
     for await (const chunk of stream) chunks.push(chunk as Buffer);
     expect(Buffer.concat(chunks).toString('utf8')).toBe('<h1>Héllo</h1>');
     expect(textFormat).toBe('html');
+  });
+});
+
+describe('inlineContentIdentity', () => {
+  it("is the hash of the UTF-8 bytes and the format's type", () => {
+    expect(inlineContentIdentity('# Héllo', 'markdown')).toEqual({
+      sha256: createHash('sha256').update(Buffer.from('# Héllo', 'utf8')).digest('hex'),
+      mimeType: 'text/markdown',
+    });
   });
 });
 

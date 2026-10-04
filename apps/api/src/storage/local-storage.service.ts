@@ -1,21 +1,30 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { type Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { BlobNotFoundError, BlobSizeMismatchError, InvalidBlobKeyError } from './storage.errors.js';
-import type { BlobStat, ByteRange, PutOptions, PutResult, StorageDriver } from './storage.types.js';
+import type {
+  BlobListing,
+  BlobStat,
+  ByteRange,
+  PutOptions,
+  PutResult,
+  StorageDriver,
+} from './storage.types.js';
 
 /** `/`-separated segments of letters, digits, `-` and `_`. No dots, so no `..` and no `.tmp`. */
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*(\/[A-Za-z0-9][A-Za-z0-9_-]*)*$/;
 const KEY_MAX_LENGTH = 512;
+/** Suffix of the file a blob is written to before it is renamed into place. */
+const TMP_SUFFIX = '.tmp';
 
 /**
  * Stores blobs as files under `root` (a Railway volume in production). Writes are atomic:
  * the body streams to a temporary file that is flushed to disk and then renamed into place,
  * so a reader never sees a partial blob. Leftover `*.tmp` files from a crash are removed by
- * the sweeper.
+ * the sweeper (`deleteIncompleteWrites`).
  */
 export class LocalStorageService implements StorageDriver {
   readonly root: string;
@@ -35,7 +44,7 @@ export class LocalStorageService implements StorageDriver {
     await mkdir(dir, { recursive: true });
     if (await this.exists(target)) throw new Error(`Blob already exists: ${key}`);
 
-    const tmp = `${target}.${randomUUID()}.tmp`;
+    const tmp = `${target}.${randomUUID()}${TMP_SUFFIX}`;
     const hash = createHash('sha256');
     let size = 0;
     const meter = new Transform({
@@ -85,6 +94,52 @@ export class LocalStorageService implements StorageDriver {
 
   async delete(key: string): Promise<void> {
     await rm(this.resolve(key), { force: true });
+  }
+
+  async *list(prefix: string, olderThan: Date): AsyncIterable<BlobListing> {
+    for (const file of await this.files(this.resolve(prefix))) {
+      if (file.endsWith(TMP_SUFFIX)) continue;
+      const modifiedAt = await this.modifiedAt(file);
+      if (modifiedAt && modifiedAt < olderThan) {
+        yield { key: path.relative(this.root, file).split(path.sep).join('/'), modifiedAt };
+      }
+    }
+  }
+
+  async deleteIncompleteWrites(olderThan: Date): Promise<number> {
+    let deleted = 0;
+    for (const file of await this.files(this.root)) {
+      if (!file.endsWith(TMP_SUFFIX)) continue;
+      const modifiedAt = await this.modifiedAt(file);
+      if (modifiedAt && modifiedAt < olderThan) {
+        await rm(file, { force: true });
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  /** Every file under `dir`, as absolute paths; none if it doesn't exist. */
+  private async files(dir: string): Promise<string[]> {
+    try {
+      const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.join(entry.parentPath, entry.name));
+    } catch (error) {
+      if (isNotFound(error)) return [];
+      throw error;
+    }
+  }
+
+  /** Null if the file is gone meanwhile (e.g. a write finished and renamed it). */
+  private async modifiedAt(file: string): Promise<Date | null> {
+    try {
+      return (await stat(file)).mtime;
+    } catch (error) {
+      if (isNotFound(error)) return null;
+      throw error;
+    }
   }
 
   /** Maps a key to its file path, refusing anything that could leave the root. */

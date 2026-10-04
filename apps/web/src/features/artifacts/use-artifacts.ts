@@ -7,6 +7,8 @@ import type {
 } from '@artifact-hub/shared';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isApiError } from '@/lib/api/api-error.ts';
+import { submissionKey } from '@/lib/api/submission-key.ts';
+import { retryTransient } from '@/lib/query-client.ts';
 import {
   artifactListQueryKey,
   artifactListsQueryKey,
@@ -18,6 +20,7 @@ import {
   fetchArtifacts,
   fetchArtifactTags,
   fetchArtifactVersions,
+  interpretSearch,
   publishArtifact,
   publishVersion,
   updateArtifact,
@@ -42,6 +45,14 @@ export function useArtifactList(params: ArtifactListParams) {
   });
 }
 
+/** Turns a search typed in plain language into gallery filters (never fails because of AI). */
+export function useInterpretSearch() {
+  return useMutation({
+    mutationFn: ({ q, scope }: { q: string; scope: ArtifactListScope }) =>
+      interpretSearch(q, scope),
+  });
+}
+
 /** Invalidated with the lists, since publishing or editing changes them. */
 export function useArtifactTags(scope: ArtifactListScope) {
   return useQuery({
@@ -53,8 +64,9 @@ export function useArtifactTags(scope: ArtifactListScope) {
 export function usePublishArtifact() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ file, metadata }: { file: File; metadata: CreateArtifactRequest }) =>
-      publishArtifact(file, metadata),
+    mutationFn: (variables: { file: File; metadata: CreateArtifactRequest }) =>
+      publishArtifact(variables.file, variables.metadata, submissionKey(variables)),
+    retry: retryTransient,
     onSuccess: (artifact) => {
       queryClient.setQueryData(artifactQueryKey(artifact.id), artifact);
       void queryClient.invalidateQueries({ queryKey: artifactListsQueryKey });
@@ -83,8 +95,9 @@ function useArtifactChanged() {
 export function usePublishVersion(id: string) {
   const onChanged = useArtifactChanged();
   return useMutation({
-    mutationFn: ({ file, metadata }: { file: File; metadata: CreateVersionRequest }) =>
-      publishVersion(id, file, metadata),
+    mutationFn: (variables: { file: File; metadata: CreateVersionRequest }) =>
+      publishVersion(id, variables.file, variables.metadata, submissionKey(variables)),
+    retry: retryTransient,
     onSuccess: onChanged,
   });
 }

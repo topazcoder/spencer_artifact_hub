@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccessModule } from '../access/access.module.js';
+import { IdempotencyModule } from '../common/idempotency/idempotency.module.js';
 import { StorageModule } from '../storage/storage.module.js';
 import { UploadsModule } from '../uploads/uploads.module.js';
 import { ArtifactVersion } from './artifact-version.entity.js';
@@ -12,6 +13,7 @@ import { ArtifactsService } from './artifacts.service.js';
   imports: [
     TypeOrmModule.forFeature([Artifact, ArtifactVersion]),
     AccessModule,
+    IdempotencyModule,
     StorageModule,
     UploadsModule,
   ],

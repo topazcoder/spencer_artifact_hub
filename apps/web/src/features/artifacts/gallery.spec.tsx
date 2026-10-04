@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { Artifact, ArtifactMimeType, User } from '@artifact-hub/shared';
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeApi } from '@/test/fake-api.ts';
@@ -12,6 +12,15 @@ function variant(item: Artifact, mimeType: ArtifactMimeType, tags: string[]): Ar
 }
 
 const shown = () => screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
+
+/** Opens AI search, describes `text` and searches. */
+async function aiSearch(user: ReturnType<typeof userEvent.setup>, text: string) {
+  await user.click(await screen.findByRole('button', { name: 'AI search' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Search with AI' });
+  await user.type(within(dialog).getByLabelText('What are you looking for?'), text);
+  await user.click(within(dialog).getByRole('button', { name: 'Search' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+}
 
 describe('gallery', () => {
   let api: ReturnType<typeof installFakeApi>;
@@ -256,6 +265,75 @@ describe('gallery', () => {
       expect((screen.getByRole('searchbox', { name: 'Search' }) as HTMLInputElement).value).toBe(
         '',
       );
+    });
+
+    it('turns a description into filters, with owner and dates removable', async () => {
+      const since = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+      api.enableAi((q, scope) => ({
+        interpreted: true,
+        filters: {
+          scope: scope as 'mine',
+          q: 'deck',
+          type: 'pdf',
+          owner: 'ada',
+          updatedFrom: since,
+        },
+      }));
+      const user = userEvent.setup();
+      const app = renderApp('/');
+      await screen.findByText('3 artifacts');
+
+      await aiSearch(user, 'PDF decks Ada made since yesterday');
+      expect(app.location()).toBe(`/?q=deck&type=pdf&owner=ada&updatedFrom=${since}`);
+      expect(api.interpretRequests).toEqual([
+        { q: 'PDF decks Ada made since yesterday', scope: 'mine' },
+      ]);
+      expect((screen.getByRole('searchbox', { name: 'Search' }) as HTMLInputElement).value).toBe(
+        'deck',
+      );
+      await waitFor(() => expect(shown()).toEqual(['Sales deck']));
+      expect(screen.getByRole('button', { name: /^Remove filter: Updated since / })).toBeTruthy();
+
+      await user.click(screen.getByRole('button', { name: 'Remove filter: By ada' }));
+      expect(app.location()).toBe(`/?q=deck&type=pdf&updatedFrom=${since}`);
+    });
+
+    it('moves to the tab the description asks for', async () => {
+      api.enableAi(() => ({ interpreted: true, filters: { scope: 'shared', owner: 'Bob' } }));
+      const user = userEvent.setup();
+      const app = renderApp('/');
+      await screen.findByText('3 artifacts');
+
+      await aiSearch(user, "Bob's work");
+      expect(app.location()).toBe('/?scope=shared&owner=Bob');
+      expect(await screen.findByRole('heading', { name: 'Shared with me', level: 1 })).toBeTruthy();
+    });
+
+    it('searches for the words when AI cannot read them', async () => {
+      api.enableAi((q, scope) => ({ interpreted: false, filters: { scope: scope as 'mine', q } }));
+      const user = userEvent.setup();
+      const app = renderApp('/');
+      await screen.findByText('3 artifacts');
+
+      await aiSearch(user, 'sales');
+      expect(app.location()).toBe('/?q=sales');
+      await waitFor(() => expect(shown()).toEqual(['Sales deck']));
+    });
+
+    it('offers AI search only when AI is on', async () => {
+      renderApp('/');
+      await screen.findByText('3 artifacts');
+      expect(screen.queryByRole('button', { name: 'AI search' })).toBeNull();
+    });
+
+    it('applies a search at once on Enter', async () => {
+      const user = userEvent.setup();
+      const app = renderApp('/');
+      await screen.findByText('3 artifacts');
+
+      await user.type(screen.getByRole('searchbox', { name: 'Search' }), 'sales{Enter}');
+      expect(app.location()).toBe('/?q=sales');
+      expect(api.interpretRequests).toEqual([]);
     });
 
     it('keeps filters when paging, and drops them when switching tabs', async () => {

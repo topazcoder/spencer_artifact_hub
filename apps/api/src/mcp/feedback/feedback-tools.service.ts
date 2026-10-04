@@ -24,6 +24,8 @@ import type { FeedbackCounts } from './feedback.types.js';
 export const MAX_THREADS = 30;
 /** Replies returned at most per thread, oldest first. */
 export const MAX_REPLIES = 10;
+/** The same comment sent again within this time is not posted twice. */
+export const COMMENT_DEDUPE_WINDOW_MS = 2 * 60_000;
 
 /**
  * Reading reviewers' comments (the agent summarizes them for what the user asked), and taking
@@ -124,7 +126,10 @@ export class FeedbackToolsService implements McpToolProvider {
           versionNo,
           parentId: input.reply_to,
         });
-        const { comment } = await this.comments.create(actor, ref.id, options);
+        // An agent may call again after a timeout or a lost answer: don't post twice.
+        const { comment, deduplicated } = await this.comments.create(actor, ref.id, options, {
+          dedupeWithinMs: COMMENT_DEDUPE_WINDOW_MS,
+        });
         const postedOn = comment.version.versionNo;
         return {
           comment: {
@@ -133,7 +138,12 @@ export class FeedbackToolsService implements McpToolProvider {
             reply_to: comment.parentId,
             url: artifactPageUrl(this.env.APP_BASE_URL, comment.artifactId, postedOn),
           },
-          next_actions: ['Tell the user it was posted, with the url.'],
+          deduplicated,
+          next_actions: [
+            deduplicated
+              ? 'The user posted this same comment a moment ago, so it was not posted again. Tell the user it is there, with the url.'
+              : 'Tell the user it was posted, with the url.',
+          ],
         };
       },
     });

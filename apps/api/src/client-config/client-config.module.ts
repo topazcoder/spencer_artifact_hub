@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
+import { AiModule } from '../ai/ai.module.js';
 import { ClientConfigController } from './client-config.controller.js';
 
-@Module({ controllers: [ClientConfigController] })
+@Module({ imports: [AiModule], controllers: [ClientConfigController] })
 export class ClientConfigModule {}

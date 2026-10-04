@@ -43,11 +43,28 @@ Known limitations of the current build, and planned improvements.
 - Cap the in-memory store's size in the meantime (LRU), as a fallback when Redis is not configured.
 - Count only failed logins per email, reset the counter after a successful login, and use exponential backoff instead of a hard block, so a targeted lockout is short-lived.
 
+## Idempotency
+- MCP dedupe is a lookup before the insert, so two identical `publish_artifact` or `add_comment` calls arriving at the same moment can both go through. Retries come one after another, which it covers; a unique constraint or an advisory lock per `(owner, sha256)` would close the gap.
+- `publish_artifact` without content (a draft for an upload) isn't deduplicated: a repeat makes a second draft, which the sweeper removes if it's never uploaded.
+- An upload's `Idempotency-Key` fingerprint covers its metadata and filename, not the file's bytes: a repeat with the same key and another file gets the first result. Our client makes a new key per submission, so only a client bug could do this; hashing the file as it streams (and reading a repeat's file to compare) would catch it.
+- A request whose process dies mid-way leaves its key "in progress" until it expires (24 h); retries with that key get a `409`, and a new submission (new key) works. Taking over keys stuck in progress after a few minutes would remove that, at the risk of doing work twice.
+
 ## Storage and content
 - Implement the `s3` and `azure` `StorageDriver`s (interfaces already in place), with optional presigned download URLs.
 - Serve user content from a separate domain (`usercontent.<domain>`) as defense in depth beyond the CSP sandbox.
 - Multi-file HTML bundles (zip upload with asset rewriting).
 - Server-generated thumbnails.
+- Stream the local driver's file listing (`opendir` with `recursive: true`): today `list` and `deleteIncompleteWrites` read the whole tree into memory before the sweeper checks the first file. Fine for thousands of files, not for hundreds of thousands. Object storage's paged listing (and lifecycle rules) replaces it at real scale.
+
+## AI
+- Implement the `openai` `AiProvider` (stubbed like the s3/azure storage drivers): one class with structured output from the zod schema. Prompts, validation, retries and the circuit breaker are shared.
+- Link a summary's themes to their comments in the thread list (the ids are in the response; the tab shows how many).
+- A summary marked outdated is still returned, so it can mention a comment deleted since. Hiding outdated summaries after a delete (or regenerating them in the background) would close that.
+- Two simultaneous requests to summarize the same comments both call the model; the later one is saved. A per-key lock (advisory lock or an in-progress row) would make it one call.
+- Dates in search filters are UTC days. Sending the browser's time zone with the search (and filtering in it) would make "yesterday" exact for everyone.
+- The gallery has no "everything I can see" tab, so a search for someone's artifacts picks *Shared with me* or *Company*; one could be in either. An *All* scope (as MCP has) would fix that.
+- Server-side refusal fallbacks (the Messages API `fallbacks` parameter) aren't sent, since the models are configurable and not all accept it; a refusal falls back like any other AI failure.
+- The circuit breaker and rate limits live in the process (one replica), like the other rate limits.
 
 ## Platform
 - Horizontal scaling (requires object storage instead of a local volume, and a real job queue).

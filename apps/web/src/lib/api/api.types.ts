@@ -10,6 +10,8 @@ export interface ApiRequestOptions<T> {
   /** Validates the success response. Omit for endpoints that return no content. */
   schema?: z.ZodType<T>;
   signal?: AbortSignal;
+  /** Sent as `Idempotency-Key`, so a retry of the request isn't done twice (create requests). */
+  idempotencyKey?: string;
 }
 
 /** One entry of a `VALIDATION_FAILED` error's details. */

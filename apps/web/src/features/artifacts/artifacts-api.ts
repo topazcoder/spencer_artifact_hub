@@ -10,6 +10,8 @@ import {
   artifactVersionListResponseSchema,
   type CreateArtifactRequest,
   type CreateVersionRequest,
+  type SearchInterpretation,
+  searchInterpretationSchema,
   type UpdateArtifactRequest,
 } from '@artifact-hub/shared';
 import { apiFetchContent, apiRequest } from '@/lib/api/client.ts';
@@ -27,14 +29,26 @@ export const artifactListQueryKey = (params: ArtifactListParams) =>
   [...artifactListsQueryKey, params] as const;
 
 export async function fetchArtifacts(
-  { scope, page, pageSize, q, type, tag }: ArtifactListParams,
+  { scope, page, pageSize, ...filters }: ArtifactListParams,
   signal?: AbortSignal,
 ): Promise<ArtifactListResponse> {
   const query = new URLSearchParams({ scope, page: String(page), pageSize: String(pageSize) });
-  for (const [key, value] of Object.entries({ q, type, tag })) {
+  for (const [key, value] of Object.entries(filters)) {
     if (value) query.set(key, value);
   }
   return apiRequest(`/artifacts?${query}`, { schema: artifactListResponseSchema, signal });
+}
+
+/**
+ * Gallery filters for a search typed in plain language. Without AI, or when it fails, a plain
+ * search for the text in the same scope (`interpreted: false`).
+ */
+export async function interpretSearch(
+  q: string,
+  scope: ArtifactListScope,
+): Promise<SearchInterpretation> {
+  const query = new URLSearchParams({ q, scope });
+  return apiRequest(`/search/interpret?${query}`, { schema: searchInterpretationSchema });
 }
 
 export const artifactTagsQueryKey = (scope: ArtifactListScope) =>
@@ -51,16 +65,25 @@ export async function fetchArtifactTags(
   ).items;
 }
 
-/** Multipart upload: the metadata first, then the file (the server reads them in that order). */
+/**
+ * Multipart upload: the metadata first, then the file (the server reads them in that order).
+ * With the same `idempotencyKey`, a retry returns the artifact the first attempt published.
+ */
 export async function publishArtifact(
   file: File,
   metadata: CreateArtifactRequest,
+  idempotencyKey?: string,
 ): Promise<Artifact> {
   const form = new FormData();
   form.append('metadata', JSON.stringify(metadata));
   form.append('file', file);
   return (
-    await apiRequest('/artifacts', { method: 'POST', body: form, schema: artifactResponseSchema })
+    await apiRequest('/artifacts', {
+      method: 'POST',
+      body: form,
+      schema: artifactResponseSchema,
+      idempotencyKey,
+    })
   ).artifact;
 }
 
@@ -80,6 +103,7 @@ export async function publishVersion(
   id: string,
   file: File,
   metadata: CreateVersionRequest,
+  idempotencyKey?: string,
 ): Promise<Artifact> {
   const form = new FormData();
   form.append('metadata', JSON.stringify(metadata));
@@ -89,6 +113,7 @@ export async function publishVersion(
       method: 'POST',
       body: form,
       schema: artifactResponseSchema,
+      idempotencyKey,
     })
   ).artifact;
 }

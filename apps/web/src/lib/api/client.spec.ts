@@ -50,6 +50,17 @@ describe('apiRequest', () => {
     );
   });
 
+  it('sends the idempotency key as a header', async () => {
+    const fetchMock = stubFetch(json(201, { ok: true }));
+    await apiRequest('/things', { method: 'POST', body: {}, idempotencyKey: 'key-1' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/things',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'Idempotency-Key': 'key-1' }),
+      }),
+    );
+  });
+
   it('returns nothing for 204', async () => {
     stubFetch(new Response(null, { status: 204 }));
     await expect(apiRequest('/auth/logout', { method: 'POST' })).resolves.toBeUndefined();

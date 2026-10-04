@@ -18,7 +18,7 @@ Time box: 2 days. The priority is a polished, working core over a large feature 
 | Blob storage | `StorageDriver` abstraction; `local` driver for dev + demo; `s3` / `azure` pluggable via env |
 | Auth (web) | Email + password, argon2 hashing, server-side sessions in a DB table, httpOnly cookie |
 | Auth (MCP) | Per-user API tokens (Bearer), created in the UI and stored hashed |
-| LLM | Claude API behind an `AiService` interface; models configurable via env |
+| LLM | `AiService` over a pluggable `AiProvider` (`AI_PROVIDER=anthropic` implemented; `openai` stubbed), like `StorageDriver`; models configurable via env |
 | Logging | `nestjs-pino`, structured JSON, request IDs carried through every step |
 | Packaging | pnpm workspace monorepo; one production image (Nest serves the built SPA) |
 | Hosting | Railway: one app service + Railway Postgres + Railway Volume for blobs |
@@ -59,8 +59,8 @@ artifact_hub/
 │  │  │  ├─ access/           # AccessPolicy: the only place authorization is decided
 │  │  │  ├─ sharing/          # access settings: people, company access, link (step 14)
 │  │  │  ├─ comments/         # comments, replies, resolve
-│  │  │  ├─ search/           # FTS + NL query → structured filters
-│  │  │  ├─ ai/               # AiService (Claude), enrichment jobs, feedback summaries
+│  │  │  ├─ search/           # NL query → gallery filters (FTS itself is in artifacts/search/)
+│  │  │  ├─ ai/               # AiService + AiProvider (anthropic/), circuit breaker, enrichment jobs
 │  │  │  ├─ mcp/              # MCP server (Streamable HTTP) + intent tools
 │  │  │  └─ health/
 │  │  └─ test/                # e2e (supertest) + MCP client tests
@@ -136,17 +136,19 @@ comments
   author_id FK, body text (≤ 5000), anchor jsonb NULL (reserved: region/page),
   resolved_at NULL, resolved_by NULL, edited_at NULL, deleted_at NULL, created_at
 
-feedback_summaries
-  id uuid PK, artifact_id FK, version_id FK NULL (NULL = all versions),
-  summary jsonb, comment_watermark (max comment created_at included), model, created_at
+feedback_summaries                            -- one per artifact and set of versions; replaced on regenerate
+  id uuid PK, artifact_id FK, version_ids uuid[] (sorted; empty = every version), UNIQUE(artifact_id, version_ids),
+  summary jsonb, input_hash char(64) (SHA-256 of the comments as summarized: a different hash = outdated),
+  comment_count, partial, model, generated_at
 
 ai_jobs
   id uuid PK, kind enum('enrich_metadata','extract_text'), artifact_version_id FK,
   status enum('pending','running','done','failed'), attempts, last_error, created_at, updated_at
 
 idempotency_keys
-  key, user_id, route, request_hash, response_status, response_body jsonb,
-  created_at, PK(user_id, key)                -- TTL 24h, pruned on schedule
+  user_id FK, key uuid, route, request_hash char(64) NULL, resource_id uuid NULL (NULL = in progress),
+  created_at, PK(user_id, key)                -- TTL 24h, pruned on schedule; no response copy:
+                                              -- a replay answers with resource_id as it is now
 ```
 
 No separate activity/audit table: version history (`artifact_versions`), comments (`comments`) and share lifecycle (`shares.created_at / revoked_at`) already record who did what and when. Security-relevant events go to structured logs (section 11).
@@ -255,7 +257,7 @@ Tool descriptions are written the way users ask for things, and each says when t
 |---|---|---|---|
 | `publish_artifact` | "Publish this mockup / share this report with the team" | `title`, `description`, `tags` (all required), `format` + `content?` (text formats only: HTML/SVG/MD) | Starts private, like the web upload; sharing is `share_artifact`. Without `content`, creates a **draft** and returns `upload_url` + `upload_command` (see below, step 21) |
 | `update_artifact` | "Here's the revised version", "rename it / change tags" | `artifact` (id or URL), `content?` (text; `format` defaults to the current version's) **or** `request_upload: true` (binary, step 21), `change_note`, optional metadata | New content creates a new version; metadata-only changes don't. Access is changed with `share_artifact` / `manage_access` |
-| `find_artifacts` | "Find the pricing deck Sara shared last week" | `query`, optional `scope: all/mine/shared_with_me/company` (the gallery tabs), `type`, `tag`, `page` | Until step 27, `query` is keywords for full-text search (the description tells the agent to narrow with scope, type and tag instead); step 27 turns a natural-language query into filters |
+| `find_artifacts` | "Find the pricing deck Sara shared last week" | `query`, optional `scope: all/mine/shared_with_me/company` (the gallery tabs), `type`, `tag`, `owner`, `updated_from` / `updated_to`, `page` | `query` is keywords for full-text search. No server-side LLM: the calling agent is one, with the conversation's context, so it turns the request into these filters itself (step 27) |
 | `get_artifact` | "What's the status of the onboarding mockup?" | `artifact`, optional `version` | Metadata, versions, access summary, open and resolved comment counts |
 | `get_feedback` | "What did reviewers say about v2? Anything unresolved?" | `artifact`, `version?`, `include: open/all` (default `open`) | Raw threads with counts per version, no server-side summary: the calling agent summarizes them for what the user actually asked. Comment bodies are marked as **untrusted user content**. The number of threads is capped; a capped result says so and the agent narrows by `version` / `include` |
 | `add_comment` | "Tell them the header looks off", "reply to Sara's comment" | `artifact`, `body`, `version?`, `reply_to?` | |
@@ -300,15 +302,15 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | Feature | Where it shows up | How |
 |---|---|---|
 | **Metadata suggestions** | Web upload form pre-fill; async fill of blanks | Fast model. HTML/MD/SVG → extracted text; images → vision input; PDF → document input. Structured output validated by zod (title ≤ 120, description ≤ 500, ≤ 8 tags, normalized lowercase). Reuses existing tags when relevant |
-| **Feedback summary** | "Feedback" tab header on each artifact (web UI only: MCP returns raw threads, and the calling agent summarizes them for the user's question, so comments don't pass through two LLMs) | Smart model. Groups comments into themes, marks resolved vs. open, highlights disagreements; per version or across versions. Cached in `feedback_summaries`, regenerated when new comments exist (watermark) |
-| **Natural-language search** | Gallery search bar; `find_artifacts` | Fast model turns the query into `{ keywords, tags, type, owner, date range }` → Postgres full-text search + filters. Falls back to plain full-text search if the LLM fails. No extra embeddings provider needed |
+| **Feedback summary** | A dialog from the Feedback tab's *Summarize feedback* button, for the version filter's choice (`GET` / `POST /api/artifacts/:id/feedback-summary`); not in MCP, which returns raw threads for the calling agent to summarize for the user's question, so comments don't pass through two LLMs | Smart model, on request only. Groups comments into themes, marks resolved vs. open, highlights disagreements; per version or across versions (for viewers limited to pinned versions, across those only). Saved in `feedback_summaries` and returned until the comments change (hash of the input), then marked outdated until someone asks again |
+| **Natural-language search** | Gallery: an *AI search* button next to the search bar opens a dialog to describe what you're looking for (the search bar keeps its instant keyword search). Not `find_artifacts`: the agent fills its filters itself | Fast model turns the query into `{ keywords, scope, type, tag, owner, date range }` (`GET /api/search/interpret`), which the gallery applies as ordinary filters (owner and dates as removable chips). Falls back to plain full-text search on the raw text if the LLM fails. No extra embeddings provider needed |
 
 ### 9.1 Graceful degradation (AI not configured or failing)
 
 **Principle:** AI only adds to the experience; it is never needed to complete a task. No user action waits on, or fails because of, an LLM call.
 
 **Mechanics:**
-- `AiService` has two implementations: `ClaudeAiService` and `NoopAiService`. The Noop version is selected at boot when `AI_ENABLED=false` or there is no API key, and a warning is logged once.
+- Providers implement one call (structured output for a system prompt, a prompt and a zod schema); `AiService` owns everything else, the same for every provider: deadline, retry, circuit breaker, validation, logging. With `AI_ENABLED=false` or no API key there is no provider, `AiService.enabled` is false, and a warning is logged once at boot.
 - `GET /api/config` exposes `features.ai: boolean` so the SPA hides AI elements instead of showing broken ones.
 - Each runtime call has a timeout, makes 1 retry for retryable errors (429/5xx/timeout), and has a circuit breaker: after N consecutive failures, AI calls are skipped for a cool-down period (`AI_UNAVAILABLE` is logged, not shown to the user).
 - AI errors never reach the global exception filter as 5xx errors; each feature catches them and falls back.
@@ -319,7 +321,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | Async fill of blank metadata | Job not enqueued; fields stay empty | Job retries up to 3 times with backoff, then marked `failed`; artifact stays published and fully usable |
 | Feedback summary | Panel hidden; raw comment threads shown as usual | Last cached summary is shown with an "outdated" badge, or the panel is hidden with "Summary unavailable"; threads always shown |
 | Natural-language search | Search bar does plain full-text search + filter controls | Falls back to plain full-text search on the raw query (logged); results are never empty because of AI failure |
-| MCP `find_artifacts` | Plain full-text search | Plain full-text search |
+| MCP `find_artifacts` | Not affected: no server-side AI | Not affected: no server-side AI |
 
 **Tests:** the e2e suite runs the core flows with `NoopAiService`, and there's a test with a failing AI stub (it throws or hangs) to verify that publish, search and feedback still succeed.
 
@@ -338,7 +340,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 ### Idempotency (critical write paths)
 | Operation | Mechanism |
 |---|---|
-| Web publish / new version / comment / share create | `Idempotency-Key` header (UUID generated per form submission). Stored with the request hash and response; a replay returns the stored response; same key with a different body → `409` |
+| Web publish / new version / comment | `Idempotency-Key` header (UUID generated per form submission, kept across retries). Stored with the request hash and what the request created; a replay returns that resource as it is now; same key with a different body or route, or while the first request is running → `409`. Sharing with people needs none: it updates the person's row |
 | MCP publish | Dedupe on `(owner, sha256)` within 10 min → return the existing artifact with `"deduplicated": true` |
 | MCP update with content | If `sha256` equals the current version's → no new version; return current with `"unchanged": true` |
 | MCP add_comment | Dedupe identical `(author, version, parent, body)` within 2 min |
@@ -348,7 +350,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 
 ### Consistency
 - Order of operations: blob first, then DB transaction. On DB failure the blob is deleted on a best-effort basis.
-- An hourly sweeper deletes blobs with no version row (older than 1 h), expired drafts, expired upload sessions and idempotency keys.
+- An hourly sweeper deletes blobs with no version row (older than 1 h) and temporary files of writes cut short, drafts never uploaded (after 24 h, unless an upload link is still open), upload sessions a day after they expired (so the upload page can still say "expired") and idempotency keys older than 24 h. Each module that owns the data decides what is a leftover; the sweeper only runs their cleanups.
 - AI jobs are rows in `ai_jobs`, processed by an in-process worker (with retry and backoff, max 3 attempts); pending jobs are resumed on boot. No external queue is needed for this scale.
 
 ---
@@ -404,7 +406,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 POST   /api/auth/signup | /login | /logout        GET /api/auth/me
 GET    /api/tokens   POST /api/tokens   DELETE /api/tokens/:id
 
-GET    /api/artifacts?q=&scope=mine|shared|public&type=&tag=&page=&pageSize=   (public = company;
+GET    /api/artifacts?q=&scope=mine|shared|public&type=&tag=&owner=&updatedFrom=&updatedTo=&page=&pageSize=   (public = company;
        type = html|image|pdf|markdown|svg; q = words, each matching a word or its start, ranked)
 GET    /api/artifacts/tags?scope=                 (tags in a scope, most used first: gallery tag filter)
 POST   /api/uploads/preview                       (multipart → detected type + AI suggestions)
@@ -421,7 +423,9 @@ GET    /api/artifacts/:id/comments?version=&include=open|all   (threads oldest f
 POST   /api/artifacts/:id/comments                (body, versionNo?, parentId?)          [Idempotency-Key]
 PATCH  /api/comments/:id                          (edit body | resolved)
 DELETE /api/comments/:id
-GET    /api/artifacts/:id/feedback-summary?version=
+GET    /api/artifacts/:id/feedback-summary?version=   (the saved summary and whether it's outdated)
+POST   /api/artifacts/:id/feedback-summary?version=   (summarize now, unless it's up to date; 503 AI_UNAVAILABLE)
+GET    /api/search/interpret?q=&scope=            (natural-language search → gallery filters)
 
 GET    /api/artifacts/:id/access                  (owner: company access, people, link)
 PUT    /api/artifacts/:id/access/company          ({ enabled, versionNo })
@@ -437,7 +441,7 @@ GET    /api/s/:token/content                      (public: sandboxed stream; ?do
 GET    /api/upload-sessions/:token                (session cookie; owner only → draft info for the upload page)
 POST   /api/upload-sessions/:token                (multipart from upload page; session cookie; owner only)
 PUT    /api/upload-sessions/:token                (raw body; Bearer API token; owner only; for agents with shell access)
-GET    /api/config                                (public: maxArtifactBytes; features.ai from step 24)
+GET    /api/config                                (public: maxArtifactBytes, features.ai)
 GET    /api/health
 POST   /mcp
 ```
@@ -484,13 +488,15 @@ STORAGE_DRIVER=local, STORAGE_LOCAL_ROOT=/data/blobs
 SHARE_LINK_KEY                     (32 bytes, base64: `openssl rand -base64 32`; encrypts share link tokens; required in production, a fixed dev-only key otherwise)
 MAX_ARTIFACT_BYTES=10485760
 UPLOAD_SESSION_TTL_MINUTES=30
-AI_ENABLED=true, ANTHROPIC_API_KEY, AI_MODEL_FAST, AI_MODEL_SMART  (all optional; app runs without them)
-AI_TIMEOUT_MS=8000, AI_CIRCUIT_FAILURE_THRESHOLD=5, AI_CIRCUIT_COOLDOWN_SECONDS=60
+SWEEP_INTERVAL_MINUTES=60            (0 turns the sweeper off; the e2e tests do, as suites share a database)
+AI_ENABLED=true, AI_PROVIDER=anthropic, ANTHROPIC_API_KEY, AI_MODEL_FAST, AI_MODEL_SMART  (all optional; app runs without them)
+AI_TIMEOUT_MS=8000, AI_SMART_TIMEOUT_MS=60000, AI_CIRCUIT_FAILURE_THRESHOLD=5, AI_CIRCUIT_COOLDOWN_SECONDS=60
+RATE_LIMIT_AI_PER_MINUTE=20            (per user, routes that call AI)
 RATE_LIMIT_LOGIN_PER_IP=20, RATE_LIMIT_LOGIN_PER_EMAIL=10, RATE_LIMIT_LOGIN_WINDOW_SECONDS=900
 RATE_LIMIT_USER_SEARCH_PER_MINUTE=60   (per user, share dialog autocomplete)
 RATE_LIMIT_SHARE_LINK_PER_MINUTE=120   (per client IP, share link page and content)
 RATE_LIMIT_API_TOKEN_PER_MINUTE=120    (per user, requests authenticated with an API token)
-RATE_LIMIT_* (upload, ai: added with those features)
+RATE_LIMIT_* (upload: added with that feature)
 SEED_DEMO=true
 ```
 
@@ -558,14 +564,14 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 21. ✅ Upload sessions: browser upload page first, then the direct `PUT`. (`publish_artifact` without `content` creates a draft and an upload; `update_artifact` with `request_upload` asks for the next version, with its change note. Both return `upload.url`, `upload.command`, `upload.expires_at` and what to do next. `uploads/sessions/` is its own module, because `ArtifactsModule` already imports `UploadsModule`. Finishing an upload is `addVersion` on the artifact, which publishes a draft. The session is consumed with one conditional `UPDATE`, released if the pipeline refuses the file, and a repeat after success returns the artifact without reading the new body. Someone else's token or session gets a 404. `PUT` takes only an API token and the raw body (a body a parser already read is refused); the page uses the session cookie. The `/upload/:token` page covers open, uploaded, already uploaded, expired and unknown links, and signed-out users come back to it after logging in. Found while testing it: every rejected upload (this page, `PUT`, and the existing publish and new-version uploads) is now answered only after the rest of its body has arrived, up to the size limit. Answering while the client was still sending made proxies (Vite's dev proxy, a hosting edge) return an empty 502 instead of the reason.)
 
 **Hardening**
-22. `Idempotency-Key` header and MCP dedupe.
-23. Sweeper.
+22. ✅ `Idempotency-Key` header and MCP dedupe. (`common/idempotency/`: `IdempotencyService.run` claims the key with one `INSERT … ON CONFLICT`, which also takes over a key older than 24 h, then does the work; the key is released if it fails, so only success is remembered. A repeat while the first is running, or with another route or body, is a `409`. The fingerprint is a hash of the validated input as canonical JSON; for uploads, of the metadata and the filename, not the file's bytes (only a bug in our own client could reuse a key for another file). Replays answer with the resource as it is now (like an upload session's repeat), with `Idempotent-Replayed: true`, so the table keeps no copies of responses. The web app sends a key per submission (`submissionKey`, one per mutation variables object) on publish, new version and comment, and retries those on network and server errors. Sharing with people takes no key: sharing again only updates the person's row. MCP: `publish_artifact` returns the user's artifact whose v1 has the same bytes and format from the last 10 minutes (`deduplicated: true`); `update_artifact` adds no version when the content equals the current version (`unchanged: true`), still applying new details; `add_comment` returns the same comment (author, version, parent, body) from the last 2 minutes.)
+23. ✅ Sweeper. (`SweeperService` runs the cleanups of the modules that own the data: `ArtifactsService.deleteUnusedBlobs` (storage keys under `artifacts/` older than 1 h that no version has, checked 500 at a time; soft-deleted artifacts keep theirs) and `deleteAbandonedDrafts`, `UploadSessionsService.deleteExpired`, `IdempotencyService.deleteExpired`, and the storage driver's `deleteIncompleteWrites` for `*.tmp` files left by a crash. These maintenance methods take no `Actor` and are never exposed (CLAUDE.md). The first sweep runs a minute after boot, so frequent redeploys don't keep putting it off, then every `SWEEP_INTERVAL_MINUTES`; the next is scheduled when one ends, so they never overlap on the one replica. A failing cleanup is logged and the others still run; each sweep logs its counts. `StorageDriver` gained `list(prefix, olderThan)` and `deleteIncompleteWrites(olderThan)`.)
 
 **AI**
-24. `AiService` with its Noop fallback, circuit breaker and `/api/config`.
+24. ✅ `AiService`, circuit breaker and `/api/config`. (`ai/`: `AiProvider` chosen by `AI_PROVIDER` in a factory, like `StorageDriver`; `AnthropicProviderService` asks for structured output from the zod schema, and reports refusals, `max_tokens` stops and non-JSON as unusable answers. `AiService` gives each call a deadline (`AI_TIMEOUT_MS` fast, `AI_SMART_TIMEOUT_MS` smart; retry included, and enforced even if a provider hangs), retries once on 408/409/429/5xx/network, validates the answer with the schema, and logs model, tokens and latency, never prompts. Its `CircuitBreaker` opens after `AI_CIRCUIT_FAILURE_THRESHOLD` provider failures in a row, logs `AI_UNAVAILABLE` once, and lets one trial call through after the cool-down; unusable answers don't count. Without a provider, `features.ai` is false. User text goes in `<untrusted_content>` blocks. AI routes are rate limited per user.)
 25. Metadata suggestions and the background job that fills blank fields.
-26. Feedback summary in the Feedback tab (web UI only; MCP `get_feedback` returns raw threads).
-27. Natural-language search.
+26. ✅ Feedback summary in the Feedback tab. (`comments/summaries/`: `POST` summarizes on request with the smart model, `GET` returns the saved one with `outdated`. Comments are sent as `[c1]`-style refs, mapped back to ids, oldest threads first within a 60 000-character budget (`partial` when some are left out). Saved per artifact and set of versions: viewers limited to pinned versions get summaries of those only, so no summary leaks comments they can't see. A hash of the input, not a watermark, decides when it's outdated, so edits, resolves and deletes count too. Without AI or when it fails: `503 AI_UNAVAILABLE`, and the saved summary stays. The Feedback tab has a *Summarize feedback* button (for this version or all versions, as the filter says) opening a dialog: the saved summary, or a new one written on opening if there is none; the overview, themes (status, sentiment, how many comments) and disagreements; *Outdated* with *Refresh* once comments change. Hidden without AI or comments.)
+27. ✅ Natural-language search, in the gallery only. (`GET /api/search/interpret` turns the text into the list's filters with the fast model: keywords, scope, type, a tag in use (an unknown tag becomes a keyword), owner and dates (UTC days, inclusive); anything invalid is dropped. The search bar keeps its instant keyword search (Enter applies it at once); an *AI search* button, shown only with `features.ai`, opens a dialog whose description replaces the filters (and the tab, if it asks for another), with owner and dates as removable chips. If AI can't read it, the words are searched as they are, with a toast saying so. `GET /api/artifacts` and `find_artifacts` gained `owner` (part of the name, or the exact email) and `updatedFrom` / `updatedTo`; MCP has no server-side LLM step, since the calling agent fills the filters itself.)
 
 **Ship**
 28. Seed data, thumbnails, open-comment counts on gallery cards, polish, WRITEUP.md, walkthrough, session logs and the `.claude/` directory.

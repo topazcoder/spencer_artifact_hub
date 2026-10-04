@@ -60,6 +60,25 @@ describe('publish dialog', () => {
     expect((form!.get('file') as File).name).toBe('pricing-page.html');
   });
 
+  it('retries a publish the server failed, with the same Idempotency-Key', async () => {
+    const { user } = await openDialog();
+    await user.upload(screen.getByLabelText('File'), file());
+    api.failNextPublish(503, ErrorCode.SERVICE_UNAVAILABLE, 'Try again.');
+    await user.click(screen.getByRole('button', { name: 'Publish' }));
+    // After the retry delay (1 s).
+    const heading = { name: 'pricing-page', level: 1 };
+    expect(await screen.findByRole('heading', heading, { timeout: 3000 })).toBeTruthy();
+
+    const keys = api.fetchMock.mock.calls
+      .filter(([url, init]) => url === '/api/artifacts' && init?.method === 'POST')
+      .map(
+        ([, init]) => (init?.headers as Record<string, string> | undefined)?.['Idempotency-Key'],
+      );
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
   it('keeps a title the user typed when a file is chosen afterwards', async () => {
     const { user } = await openDialog();
     await user.type(screen.getByLabelText('Title'), 'My title');

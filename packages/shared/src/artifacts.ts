@@ -205,6 +205,7 @@ export const ARTIFACT_TYPE_FILTERS = {
 export type ArtifactTypeFilter = keyof typeof ARTIFACT_TYPE_FILTERS;
 
 export const ARTIFACT_SEARCH_MAX_LENGTH = 200;
+export const ARTIFACT_OWNER_FILTER_MAX_LENGTH = 100;
 
 /** Blank values count as absent, so a cleared filter in a URL (`?q=`) is no filter. */
 export const blankAsUndefined = (value: unknown) =>
@@ -230,6 +231,15 @@ export const artifactListQuerySchema = z.object({
     z.enum(Object.keys(ARTIFACT_TYPE_FILTERS) as [ArtifactTypeFilter]).optional(),
   ),
   tag: z.preprocess(blankAsUndefined, artifactTagSchema.optional()),
+  /** Only artifacts whose owner's name contains this, or whose owner has this email. */
+  owner: z.preprocess(
+    blankAsUndefined,
+    z.string().trim().max(ARTIFACT_OWNER_FILTER_MAX_LENGTH).optional(),
+  ),
+  /** Only artifacts last updated on or after this day (UTC, `YYYY-MM-DD`). */
+  updatedFrom: z.preprocess(blankAsUndefined, z.iso.date().optional()),
+  /** Only artifacts last updated on or before this day (UTC, `YYYY-MM-DD`). */
+  updatedTo: z.preprocess(blankAsUndefined, z.iso.date().optional()),
   /** 1-based. */
   page: z.coerce.number().int().min(1).max(ARTIFACT_LIST_MAX_PAGE).default(1),
   pageSize: z.coerce

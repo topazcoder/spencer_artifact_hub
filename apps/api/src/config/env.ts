@@ -63,6 +63,37 @@ export const envSchema = z
       .min(1)
       .max(24 * 60)
       .default(30),
+    /**
+     * How often the sweeper removes leftovers (unused blobs, abandoned drafts, expired upload
+     * sessions and idempotency keys). 0 turns it off (the e2e tests, which share a database).
+     */
+    SWEEP_INTERVAL_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(24 * 60)
+      .default(60),
+    /**
+     * AI features (natural-language search, feedback summaries). Everything works without them:
+     * AI is off when this is false or the selected provider has no API key.
+     */
+    AI_ENABLED: z.stringbool().default(true),
+    /** Which LLM provider serves AI features. Only `anthropic` is implemented. */
+    AI_PROVIDER: z.enum(['anthropic', 'openai']).default('anthropic'),
+    ANTHROPIC_API_KEY: z.string().optional(),
+    /** For quick, simple tasks (turning a search into filters). Provider-specific model id. */
+    AI_MODEL_FAST: z.string().default('claude-haiku-4-5-20251001'),
+    /** For tasks that need judgment (summarizing feedback). Provider-specific model id. */
+    AI_MODEL_SMART: z.string().default('claude-sonnet-5-5'),
+    /** How long a fast-model call may take, retry included, before its feature falls back. */
+    AI_TIMEOUT_MS: z.coerce.number().int().min(100).default(8000),
+    /** The same for the smart model, which thinks before it answers. */
+    AI_SMART_TIMEOUT_MS: z.coerce.number().int().min(100).default(60_000),
+    /** After this many failed calls in a row, AI calls are skipped for the cool-down. */
+    AI_CIRCUIT_FAILURE_THRESHOLD: z.coerce.number().int().min(1).default(5),
+    AI_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).default(60),
+    /** Requests per user to routes that call AI (search interpretation, summarizing). */
+    RATE_LIMIT_AI_PER_MINUTE: z.coerce.number().int().min(1).default(20),
     /** Largest artifact version accepted, enforced while the upload streams in. 10 MB by default. */
     MAX_ARTIFACT_BYTES: z.coerce
       .number()
