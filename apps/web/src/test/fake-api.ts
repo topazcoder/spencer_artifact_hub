@@ -46,6 +46,7 @@ const SHARED_ROUTE = /^GET \/api\/s\/([^/?]+)(\/content)?(\?.*)?$/;
 const COMMENTS_ROUTE = /^(GET|POST) \/api\/artifacts\/([^/?]+)\/comments(?:\?(.*))?$/;
 const COMMENT_ROUTE = /^(PATCH|DELETE) \/api\/comments\/([^/?]+)$/;
 const TOKEN_ROUTE = /^DELETE \/api\/tokens\/([^/?]+)$/;
+const UPLOAD_SESSION_ROUTE = /^(GET|POST) \/api\/upload-sessions\/([^/?]+)$/;
 
 const MIME_BY_EXTENSION: Record<string, ArtifactMimeType> = {
   html: 'text/html',
@@ -113,6 +114,11 @@ export function installFakeApi() {
   let signedIn: User | null = null;
   /** The signed-in user's live API tokens, newest first. */
   let apiTokens: ApiToken[] = [];
+  /** Upload sessions by token, all the signed-in user's. */
+  const uploadSessions = new Map<
+    string,
+    { artifactId: string; changeNote: string | null; expired: boolean; done: boolean }
+  >();
 
   const publish = (form: FormData): Response => {
     publishedForms.push(form);
@@ -564,6 +570,43 @@ export function installFakeApi() {
       return json(200, { artifact: seen(stored.artifact) });
     }
 
+    const uploadMatch = UPLOAD_SESSION_ROUTE.exec(route);
+    if (uploadMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      const [, method, token = ''] = uploadMatch;
+      const upload = uploadSessions.get(decodeURIComponent(token));
+      const stored = upload && artifacts.get(upload.artifactId);
+      if (!upload || !stored) {
+        return error(404, ErrorCode.NOT_FOUND, "This upload link doesn't work.");
+      }
+      if (method === 'GET') {
+        return json(200, {
+          session: {
+            purpose: stored.artifact.status === 'draft' ? 'create' : 'new_version',
+            status: upload.done ? 'done' : upload.expired ? 'expired' : 'open',
+            artifact: { id: stored.artifact.id, title: stored.artifact.title },
+            versionNo: stored.artifact.latestVersionNo + 1,
+            changeNote: upload.changeNote,
+            expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+          },
+        });
+      }
+      if (upload.done) return json(201, { artifact: seen(stored.artifact) });
+      if (upload.expired) {
+        return error(410, ErrorCode.UPLOAD_SESSION_EXPIRED, 'This upload link has expired.');
+      }
+      const form = new FormData();
+      form.set('metadata', JSON.stringify({ changeNote: upload.changeNote ?? '' }));
+      form.set('file', (init.body as FormData).get('file') as File);
+      const response = publishVersion(upload.artifactId, form);
+      if (response.ok) {
+        upload.done = true;
+        stored.artifact = { ...stored.artifact, status: 'published' };
+        return json(201, { artifact: seen(stored.artifact) });
+      }
+      return response;
+    }
+
     const tokenMatch = TOKEN_ROUTE.exec(route);
     if (tokenMatch) {
       if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
@@ -770,6 +813,21 @@ export function installFakeApi() {
     /** The artifact as the fake server currently has it, if it still exists. */
     artifact(id: string): Artifact | undefined {
       return artifacts.get(id)?.artifact;
+    },
+    /**
+     * An upload link for the artifact (added with `addArtifact`), as if an MCP client had asked
+     * for one. Returns its token.
+     */
+    addUploadSession(
+      artifactId: string,
+      {
+        changeNote = null,
+        expired = false,
+      }: { changeNote?: string | null; expired?: boolean } = {},
+    ): string {
+      const token = crypto.randomUUID();
+      uploadSessions.set(token, { artifactId, changeNote, expired, done: false });
+      return token;
     },
     /** Gives the signed-in user an API token, as if created earlier. */
     addApiToken(name: string, lastUsedAt: string | null = null): ApiToken {

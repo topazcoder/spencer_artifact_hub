@@ -8,6 +8,7 @@ import { NotFoundPage } from './not-found-page.tsx';
 import { SettingsPage } from './settings-page.tsx';
 import { SharedLinkPage } from './shared-link-page.tsx';
 import { SignupPage } from './signup-page.tsx';
+import { UploadPage } from './upload-page.tsx';
 
 /** Everything requires a session except login, signup and share links. */
 export const routes: RouteObject[] = [
@@ -29,6 +30,7 @@ export const routes: RouteObject[] = [
           { index: true, element: <GalleryPage /> },
           { path: 'artifacts/:id', element: <ArtifactPage /> },
           { path: 'settings', element: <SettingsPage /> },
+          { path: 'upload/:token', element: <UploadPage /> },
           { path: '*', element: <NotFoundPage /> },
         ],
       },

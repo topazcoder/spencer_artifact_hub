@@ -267,6 +267,11 @@ export class ArtifactToolsService implements McpToolProvider {
       // Owner only.
       access: access && accessData(access, { linkUrl: false }),
       next_actions: [
+        ...(artifact.status === 'draft'
+          ? [
+              'It is a draft waiting for its file. If its upload link has expired, call update_artifact with request_upload: true for a new one.',
+            ]
+          : []),
         ...(counts.open + counts.resolved > 0 ? ['Call get_feedback to read the comments.'] : []),
         ...(versions.length > 1 && version
           ? ['Call get_artifact with another version number to see that version.']

@@ -56,6 +56,13 @@ export const envSchema = z
     STORAGE_DRIVER: z.enum(['local', 's3', 'azure']).default('local'),
     /** Root directory of the `local` driver (a mounted volume in production). */
     STORAGE_LOCAL_ROOT: z.string().optional(),
+    /** How long an upload link from MCP (images, PDFs) stays usable. */
+    UPLOAD_SESSION_TTL_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(24 * 60)
+      .default(30),
     /** Largest artifact version accepted, enforced while the upload streams in. 10 MB by default. */
     MAX_ARTIFACT_BYTES: z.coerce
       .number()

@@ -6,3 +6,4 @@ export * from './comments.js';
 export * from './errors.js';
 export * from './format.js';
 export * from './sharing.js';
+export * from './upload-sessions.js';

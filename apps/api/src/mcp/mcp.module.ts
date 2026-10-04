@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ArtifactsModule } from '../artifacts/artifacts.module.js';
 import { CommentsModule } from '../comments/comments.module.js';
 import { SharingModule } from '../sharing/sharing.module.js';
+import { UploadSessionsModule } from '../uploads/sessions/upload-sessions.module.js';
 import { ArtifactToolsService } from './artifacts/artifact-tools.service.js';
 import { FeedbackToolsService } from './feedback/feedback-tools.service.js';
 import { McpController } from './mcp.controller.js';
@@ -19,7 +20,7 @@ const TOOL_PROVIDERS = [
 ];
 
 @Module({
-  imports: [ArtifactsModule, CommentsModule, SharingModule],
+  imports: [ArtifactsModule, CommentsModule, SharingModule, UploadSessionsModule],
   controllers: [McpController],
   providers: [
     ...TOOL_PROVIDERS,

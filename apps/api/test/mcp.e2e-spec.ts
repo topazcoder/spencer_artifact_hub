@@ -1,62 +1,30 @@
 import { randomUUID } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { artifactResponseSchema, createApiTokenResponseSchema } from '@artifact-hub/shared';
+import { artifactResponseSchema } from '@artifact-hub/shared';
 import request from 'supertest';
 import { createTestApp } from './create-test-app.js';
+import { callTool, mcpClients } from './mcp-client.js';
 import { fixtures } from './fixtures/content.js';
 import { TEST_ORIGIN, testEnv } from './test-env.js';
 import { type TestUser, testUsers } from './test-users.js';
 
-/**
- * Structured content, typed for the lists the tests look into: each tool returns some of them.
- * Everything else is checked with `toMatchObject`.
- */
-interface ToolData extends Record<string, unknown> {
-  items: { id: string }[];
-  versions: { number: number }[];
-  threads: { resolved: boolean }[];
-  next_actions: string[];
-}
-
-interface ToolResult {
-  text: string;
-  data: ToolData;
-  isError: boolean;
-}
-
-async function call(
-  client: Client,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<ToolResult> {
-  const result = (await client.callTool({ name, arguments: args })) as CallToolResult;
-  const first = result.content[0];
-  return {
-    text: first?.type === 'text' ? first.text : '',
-    data: (result.structuredContent ?? {}) as ToolData,
-    isError: result.isError === true,
-  };
-}
-
 describe('MCP server (e2e)', () => {
   let app: NestExpressApplication;
+  let mcp: Awaited<ReturnType<typeof mcpClients>>;
   let baseUrl: string;
   let users: ReturnType<typeof testUsers>;
   let ada: TestUser;
   let bob: TestUser;
   let carol: TestUser;
-  const clients: Client[] = [];
   /** Unique to this run, so searches only see what this suite published. */
   const runTag = `mcp-${randomUUID().slice(0, 8)}`;
 
   beforeAll(async () => {
     app = await createTestApp();
-    await app.listen(0, '127.0.0.1');
-    baseUrl = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
+    mcp = await mcpClients(app);
+    baseUrl = mcp.baseUrl;
     users = testUsers(app, 'mcp');
     [ada, bob, carol] = await Promise.all([
       users.create('Ada'),
@@ -66,7 +34,7 @@ describe('MCP server (e2e)', () => {
   });
 
   afterAll(async () => {
-    await Promise.all(clients.map((client) => client.close()));
+    await mcp.close();
     await users.cleanup();
     await app.close();
   });
@@ -75,26 +43,9 @@ describe('MCP server (e2e)', () => {
   const send = (method: 'post' | 'patch', user: TestUser, path: string) =>
     http()[method](`/api${path}`).set('Origin', TEST_ORIGIN).set('Cookie', user.cookie);
 
-  /** One token per user: there is a cap on live tokens. */
-  const tokens = new Map<string, string>();
-  async function tokenFor(user: TestUser): Promise<string> {
-    const existing = tokens.get(user.id);
-    if (existing) return existing;
-    const res = await send('post', user, '/tokens').send({ name: 'e2e' }).expect(201);
-    const { secret } = createApiTokenResponseSchema.parse(res.body);
-    tokens.set(user.id, secret);
-    return secret;
-  }
-
-  async function connect(user: TestUser): Promise<Client> {
-    const client = new Client({ name: 'artifact-hub-e2e', version: '1.0.0' });
-    const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
-      requestInit: { headers: { Authorization: `Bearer ${await tokenFor(user)}` } },
-    });
-    await client.connect(transport);
-    clients.push(client);
-    return client;
-  }
+  const tokenFor = (user: TestUser) => mcp.tokenFor(user);
+  const connect = (user: TestUser) => mcp.connect(user);
+  const call = callTool;
 
   /** A private artifact of `owner`'s, tagged with this run's tag, with `versions` versions. */
   async function publish(owner: TestUser, title: string, versions = 1): Promise<string> {

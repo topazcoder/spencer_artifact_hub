@@ -7,6 +7,7 @@ import { CreateShareLinks1791500000000 } from './1791500000000-CreateShareLinks.
 import { AddArtifactSearch1791600000000 } from './1791600000000-AddArtifactSearch.js';
 import { CreateComments1791700000000 } from './1791700000000-CreateComments.js';
 import { CreateApiTokens1791800000000 } from './1791800000000-CreateApiTokens.js';
+import { CreateUploadSessions1791900000000 } from './1791900000000-CreateUploadSessions.js';
 
 /**
  * Every migration, in order. Listed explicitly (not globbed) so the same list works from
@@ -22,4 +23,5 @@ export const migrations = [
   AddArtifactSearch1791600000000,
   CreateComments1791700000000,
   CreateApiTokens1791800000000,
+  CreateUploadSessions1791900000000,
 ];

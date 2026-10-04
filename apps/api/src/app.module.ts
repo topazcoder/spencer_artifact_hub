@@ -16,6 +16,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
 import { McpModule } from './mcp/mcp.module.js';
 import { SharingModule } from './sharing/sharing.module.js';
+import { UploadSessionsModule } from './uploads/sessions/upload-sessions.module.js';
 import { WebModule } from './web/web.module.js';
 
 @Module({})
@@ -36,6 +37,7 @@ export class AppModule {
         ArtifactsModule,
         SharingModule,
         CommentsModule,
+        UploadSessionsModule,
         McpModule,
         ClientConfigModule,
         HealthModule,

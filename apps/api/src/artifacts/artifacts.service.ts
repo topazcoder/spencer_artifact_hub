@@ -103,6 +103,27 @@ export class ArtifactsService {
   }
 
   /**
+   * Creates an artifact without content: a draft only its owner can see, until its first
+   * version is added (an MCP upload session). Drafts never uploaded are swept after a day.
+   */
+  async createDraft(actor: Actor, metadata: CreateArtifactMetadata): Promise<ArtifactView> {
+    const artifactId = randomUUID();
+    await this.artifacts.insert({
+      id: artifactId,
+      ownerId: actor.userId,
+      title: metadata.title,
+      description: metadata.description,
+      tags: metadata.tags,
+      visibility: metadata.visibility,
+      status: 'draft',
+      metadataSource: 'user',
+      latestVersionNo: 0,
+    });
+    this.logger.info({ userId: actor.userId, artifactId, via: actor.via }, 'Draft created');
+    return this.get(actor, artifactId);
+  }
+
+  /**
    * Adds `content` as the next version and makes it current. Only the owner may. The artifact
    * row is locked while the version is numbered; if another version was committed since the
    * number was picked for the blob key, this fails with `CONFLICT` and the client can retry.
