@@ -10,10 +10,10 @@ export interface GalleryFilters {
   type?: ArtifactTypeFilter;
   /** Artifacts with all of these tags. */
   tag?: string[];
-  /** Part of the owner's name, or their email (from AI search). */
-  owner?: string;
-  /** The owner's user id, as picked in the gallery. */
-  ownerId?: string;
+  /** Artifacts of any of these owners: part of a name, or an email (from AI search). */
+  owner?: string[];
+  /** The ids of the owners picked in the gallery: artifacts of any of them. */
+  ownerId?: string[];
   /** Last updated on or after this day (`YYYY-MM-DD`, UTC). */
   updatedFrom?: string;
   /** Last updated on or before this day (`YYYY-MM-DD`, UTC). */

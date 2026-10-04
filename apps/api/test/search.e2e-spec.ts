@@ -55,7 +55,10 @@ describe('Search and filters (e2e)', () => {
     return artifactResponseSchema.parse(res.body).artifact.id;
   }
 
-  async function titles(user: TestUser, query: Record<string, string>): Promise<string[]> {
+  async function titles(
+    user: TestUser,
+    query: Record<string, string | string[]>,
+  ): Promise<string[]> {
     const res = await http()
       .get('/api/artifacts')
       .query({ pageSize: 50, ...query })
@@ -83,7 +86,19 @@ describe('Search and filters (e2e)', () => {
       expect(await titles(ada, { q: `page ${word.slice(0, 6)}` })).toEqual([
         `Pricing page ${word}`,
       ]);
-      expect(await titles(ada, { q: `${word} nothing` })).toEqual([]);
+    });
+
+    it('treats words joined by | as alternatives', async () => {
+      expect(await titles(ada, { q: `${word} nothing|page` })).toEqual([`Pricing page ${word}`]);
+    });
+
+    it('lists what matches any word when no artifact matches all of them', async () => {
+      const found = await titles(ada, { q: `pricing ${uniqueWord()}` });
+      expect(found.toSorted()).toEqual(
+        [`Pricing page ${word}`, `Roadmap ${word}`, `Team offsite ${word}`].toSorted(),
+      );
+      // Nothing matches any word: still nothing.
+      expect(await titles(ada, { q: `${uniqueWord()} ${uniqueWord()}` })).toEqual([]);
     });
 
     it('finds words in tags and descriptions, ranking title matches first', async () => {
@@ -205,6 +220,31 @@ describe('Search and filters (e2e)', () => {
       expect(await titles(bob, { ...search, owner: '%' })).toEqual([]);
     });
 
+    it('narrows by several owners at once: any of them', async () => {
+      const first = await users.create(`Sara ${word}`);
+      const second = await users.create(`Sara ${word}`);
+      await publish(first, { title: `First ${word}`, visibility: 'public' });
+      await publish(second, { title: `Second ${word}`, visibility: 'public' });
+      await publish(ada, { title: `Other ${word}`, visibility: 'public' });
+      const search = { q: word, scope: 'public' };
+
+      expect((await titles(bob, { ...search, owner: `Sara ${word}` })).toSorted()).toEqual([
+        `First ${word}`,
+        `Second ${word}`,
+      ]);
+      expect(
+        (await titles(bob, { ...search, owner: [first.email, 'nobody-here'] })).toSorted(),
+      ).toEqual([`First ${word}`]);
+      expect(
+        (await titles(bob, { ...search, owner: [first.email, second.email] })).toSorted(),
+      ).toEqual([`First ${word}`, `Second ${word}`]);
+      await http()
+        .get('/api/artifacts')
+        .query({ owner: Array.from({ length: 11 }, (_, i) => `o${i}`) })
+        .set('Cookie', bob.cookie)
+        .expect(400);
+    });
+
     it('narrows by owner id, within the scope', async () => {
       const sara = await users.create(`Sara ${word}`);
       await publish(sara, { title: `Report ${word}`, visibility: 'public' });
@@ -213,6 +253,8 @@ describe('Search and filters (e2e)', () => {
 
       expect(await titles(bob, { ...search, ownerId: sara.id })).toEqual([`Report ${word}`]);
       expect(await titles(bob, { ...search, ownerId: randomUUID() })).toEqual([]);
+      // Several: any of them.
+      expect(await titles(bob, { ...search, ownerId: [sara.id, ada.id] })).toHaveLength(2);
       // The scope still applies: Sara's public artifact isn't in Bob's own.
       expect(await titles(bob, { q: word, ownerId: sara.id })).toEqual([]);
       await http()

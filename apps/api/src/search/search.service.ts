@@ -15,7 +15,7 @@ import type { SearchContext } from './search.types.js';
 
 /**
  * Natural-language search for the gallery (plan §9): the fast model turns what the user typed
- * into the list's filters (keywords, scope, type, tag, owner, dates), which the gallery then
+ * into the list's filters (keywords with synonyms, scope, type, owner, dates), which the gallery then
  * lists like any other. Without AI, or when it fails, the text becomes a plain keyword search.
  * MCP has no use for it: the calling agent fills `find_artifacts`' filters itself.
  */
@@ -31,11 +31,11 @@ export class SearchService {
     const fallback: SearchInterpretation = { interpreted: false, filters: { scope, q } };
     if (!this.ai.enabled) return fallback;
 
-    const tags = await this.artifacts.listTags(actor, {});
+    const owners = await this.artifacts.listOwners(actor);
     const context: SearchContext = {
       text: q,
       scope,
-      tags: tags.map((item) => item.tag),
+      owners,
       today: new Date().toISOString().slice(0, 10),
     };
     try {

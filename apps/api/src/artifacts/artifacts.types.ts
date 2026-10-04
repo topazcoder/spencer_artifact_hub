@@ -38,12 +38,18 @@ export interface ArtifactContent {
   open(): Promise<Readable>;
 }
 
+/** A person whose artifacts are listed, as the AI search reads names. */
+export interface OwnerSummary {
+  displayName: string;
+  email: string;
+}
+
 /** Which artifacts a list covers. Filters only ever narrow what `AccessPolicy` allows. */
 export interface ArtifactFilters {
   /** Only artifacts owned by this user. */
   ownerId?: string;
-  /** Only artifacts owned by this user, picked by the caller; on top of the scope's own filters. */
-  ownedBy?: string;
+  /** Only artifacts owned by any of these users, picked by the caller; on top of the scope's own filters. */
+  ownedBy?: readonly string[];
   /** Only artifacts with this visibility. */
   visibility?: ArtifactVisibility;
   /** Only other users' artifacts shared with this user by name. */
@@ -54,8 +60,11 @@ export interface ArtifactFilters {
   mimeTypes?: readonly ArtifactMimeType[];
   /** Only artifacts with all of these (normalized) tags. */
   tags?: readonly string[];
-  /** Only artifacts whose owner's display name contains this (any case), or whose owner has this email. */
-  owner?: string;
+  /**
+   * Only artifacts whose owner matches any of these: the display name contains it (any case),
+   * or the owner has it as their email.
+   */
+  owners?: readonly string[];
   /** Only artifacts last updated on or after this day (UTC, `YYYY-MM-DD`). */
   updatedFrom?: string;
   /** Only artifacts last updated on or before this day (UTC, `YYYY-MM-DD`). */

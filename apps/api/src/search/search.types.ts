@@ -1,4 +1,5 @@
 import type { ArtifactListScope } from '@artifact-hub/shared';
+import type { OwnerSummary } from '../artifacts/artifacts.types.js';
 import type { z } from 'zod';
 import type { searchAnswerSchema } from './search-interpretation.js';
 
@@ -11,8 +12,8 @@ export interface SearchContext {
   text: string;
   /** The gallery tab they searched from. */
   scope: ArtifactListScope;
-  /** Tags on the artifacts they can see, the most used first. */
-  tags: readonly string[];
+  /** Other people whose artifacts they can see, the most artifacts first. */
+  owners: readonly OwnerSummary[];
   /** `YYYY-MM-DD` (UTC), for "last week" and the like. */
   today: string;
 }

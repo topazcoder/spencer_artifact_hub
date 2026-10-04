@@ -214,6 +214,8 @@ export type ArtifactListSort = (typeof ARTIFACT_LIST_SORTS)[number];
 
 export const ARTIFACT_SEARCH_MAX_LENGTH = 200;
 export const ARTIFACT_OWNER_FILTER_MAX_LENGTH = 100;
+/** The most owners the owner filter takes: several people may share a name. */
+export const ARTIFACT_OWNERS_FILTER_MAX = 10;
 
 /** One value or several (a repeated query key) as a list; blank values count as absent. */
 const blankAsList = (value: unknown) => {
@@ -231,7 +233,10 @@ export const blankAsUndefined = (value: unknown) =>
 /** Query of `GET /api/artifacts`. Filters narrow the scope; `q` also ranks by relevance. */
 export const artifactListQuerySchema = z.object({
   scope: z.enum(ARTIFACT_LIST_SCOPES).default('mine'),
-  /** Words to find in the title, tags, description and content; each may be a word's start. */
+  /**
+   * Words to find in the title, tags, description and content; each may be a word's start, or
+   * alternatives `a|b`. If no artifact has every word, those with any of them are listed.
+   */
   q: z.preprocess(
     blankAsUndefined,
     z
@@ -256,13 +261,27 @@ export const artifactListQuerySchema = z.object({
       .transform((tags) => [...new Set(tags)])
       .optional(),
   ),
-  /** Only artifacts whose owner's name contains this, or whose owner has this email. */
+  /**
+   * Only artifacts of owners matching any of these: part of the owner's name, or their exact
+   * email. `?owner=sara&owner=tom`.
+   */
   owner: z.preprocess(
-    blankAsUndefined,
-    z.string().trim().max(ARTIFACT_OWNER_FILTER_MAX_LENGTH).optional(),
+    blankAsList,
+    z
+      .array(z.string().trim().min(1).max(ARTIFACT_OWNER_FILTER_MAX_LENGTH))
+      .max(ARTIFACT_OWNERS_FILTER_MAX, `Use at most ${ARTIFACT_OWNERS_FILTER_MAX} owners.`)
+      .transform((owners) => [...new Set(owners)])
+      .optional(),
   ),
-  /** Only artifacts owned by this user, as picked from `GET /api/users/search`. */
-  ownerId: z.preprocess(blankAsUndefined, z.guid().optional()),
+  /** Only artifacts owned by any of these users, as picked from `GET /api/users/search`. */
+  ownerId: z.preprocess(
+    blankAsList,
+    z
+      .array(z.guid())
+      .max(ARTIFACT_OWNERS_FILTER_MAX, `Use at most ${ARTIFACT_OWNERS_FILTER_MAX} owners.`)
+      .transform((ids) => [...new Set(ids)])
+      .optional(),
+  ),
   /** Only artifacts last updated on or after this day (UTC, `YYYY-MM-DD`). */
   updatedFrom: z.preprocess(blankAsUndefined, z.iso.date().optional()),
   /** Only artifacts last updated on or before this day (UTC, `YYYY-MM-DD`). */
@@ -299,6 +318,8 @@ export type ArtifactTagListResponse = z.infer<typeof artifactTagListResponseSche
 export const ARTIFACT_TAG_SUGGESTION_MAX = 10;
 /** The most tags listed for the AI search to choose from. */
 export const ARTIFACT_TAG_LIST_MAX = 50;
+/** The most people listed for the AI search to read a name against. */
+export const ARTIFACT_OWNER_LIST_MAX = 50;
 
 /**
  * In the requested `sort`; without one, the most relevant first when searching, otherwise the

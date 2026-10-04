@@ -130,7 +130,7 @@ export class ArtifactToolsService implements McpToolProvider {
           search: query || undefined,
           mimeTypes: type ? ARTIFACT_TYPE_FILTERS[type] : undefined,
           tags: tag ? [tag] : undefined,
-          owner,
+          owners: owner ? [owner] : undefined,
           updatedFrom: input.updated_from,
           updatedTo: input.updated_to,
           page,

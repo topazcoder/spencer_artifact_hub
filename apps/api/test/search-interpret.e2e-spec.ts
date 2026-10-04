@@ -13,8 +13,7 @@ const answer = {
   keywords: 'pricing',
   scope: 'shared',
   type: 'pdf',
-  tag: 'Marketing',
-  owner: 'Sara',
+  owners: ['Sara'],
   updatedFrom: '2026-09-28',
   updatedTo: '2026-10-04',
 };
@@ -67,8 +66,7 @@ describe('Natural-language search (e2e)', () => {
           scope: 'shared',
           q: 'pricing',
           type: 'pdf',
-          tag: ['marketing'],
-          owner: 'Sara',
+          owner: ['Sara'],
           updatedFrom: '2026-09-28',
           updatedTo: '2026-10-04',
         },
@@ -76,8 +74,7 @@ describe('Natural-language search (e2e)', () => {
 
       const sent = ai.requests.at(-1)!;
       expect(sent.model).toBe(testEnv.AI_MODEL_FAST);
-      // The user's own tags, to pick from; the search as data.
-      expect(sent.prompt).toMatch(/source="tags">\n[^<]*marketing/);
+      // The search as data.
       expect(sent.prompt).toContain(
         '<untrusted_content source="search">\nthe pricing PDF Sara shared last week about marketing\n',
       );

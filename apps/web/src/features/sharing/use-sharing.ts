@@ -6,7 +6,13 @@ import {
   type UpdatePersonAccessRequest,
   USER_SEARCH_MIN_LENGTH,
 } from '@artifact-hub/shared';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { artifactListsQueryKey, artifactQueryKey } from '@/features/artifacts/artifacts-api.ts';
 import { useDebouncedValue } from '@/lib/use-debounced-value.ts';
 import {
@@ -106,13 +112,14 @@ export function useUserSearch(query: string) {
   });
 }
 
-/** A user by id; disabled without one. A user's name doesn't change often. */
-export function useUser(id: string | undefined) {
-  return useQuery({
-    queryKey: userQueryKey(id ?? ''),
-    queryFn: ({ signal }) => fetchUser(id ?? '', signal),
-    enabled: id !== undefined,
-    staleTime: 5 * 60_000,
-    retry: false,
+/** The users with these ids, in order, each loaded (and cached) on its own. */
+export function useUsers(ids: readonly string[]) {
+  return useQueries({
+    queries: ids.map((id) => ({
+      queryKey: userQueryKey(id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchUser(id, signal),
+      staleTime: 5 * 60_000,
+      retry: false,
+    })),
   });
 }

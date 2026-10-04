@@ -117,7 +117,7 @@ export class ArtifactsController {
       search: q,
       mimeTypes: type ? ARTIFACT_TYPE_FILTERS[type] : undefined,
       tags: tag,
-      owner,
+      owners: owner,
       ownedBy: ownerId,
       updatedFrom,
       updatedTo,

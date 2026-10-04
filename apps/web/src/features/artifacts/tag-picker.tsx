@@ -55,9 +55,9 @@ export function TagPicker({
   };
 
   return (
-    <div className="flex min-h-9 min-w-48 flex-1 flex-wrap items-center gap-1.5 rounded-md border border-input px-2 py-1 shadow-xs has-[input:focus-visible]:border-ring has-[input:focus-visible]:ring-[3px] has-[input:focus-visible]:ring-ring/50 sm:max-w-md dark:bg-input/30">
+    <div className="flex h-9 w-full max-w-full items-center overflow-x-auto overflow-y-hidden gap-1.5 rounded-md border border-input px-2 py-0 shadow-xs has-[input:focus-visible]:border-ring has-[input:focus-visible]:ring-[3px] has-[input:focus-visible]:ring-ring/50 sm:w-auto sm:min-w-64 dark:bg-input/30">
       {selected.map((tag) => (
-        <Badge key={tag} variant="secondary" className="gap-1 pr-1">
+        <Badge key={tag} variant="secondary" className="shrink-0 gap-1 pr-1">
           {tag}
           <button
             type="button"
@@ -76,7 +76,7 @@ export function TagPicker({
         autoComplete="off"
         list={listId}
         value={draft}
-        className="h-7 min-w-24 flex-1 border-0 px-1 shadow-none focus-visible:ring-0 dark:bg-transparent"
+        className="h-7 min-w-24 flex-1 shrink-0 border-0 px-1 shadow-none focus-visible:ring-0 dark:bg-transparent"
         onChange={onType}
         onKeyDown={onKeyDown}
       />

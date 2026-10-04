@@ -4,7 +4,10 @@ import type { SearchAnswer, SearchContext } from './search.types.js';
 const context: SearchContext = {
   text: 'the pricing deck Sara shared last week',
   scope: 'mine',
-  tags: ['marketing', 'q3 launch'],
+  owners: [
+    { displayName: 'Sara Lee', email: 'sara@acme.test' },
+    { displayName: 'Tom Ray', email: 'tom@acme.test' },
+  ],
   today: '2026-10-04',
 };
 
@@ -12,8 +15,7 @@ const empty: SearchAnswer = {
   keywords: null,
   scope: null,
   type: null,
-  tag: null,
-  owner: null,
+  owners: [],
   updatedFrom: null,
   updatedTo: null,
 };
@@ -26,8 +28,7 @@ describe('toSearchFilters', () => {
           keywords: ' pricing ',
           scope: 'shared',
           type: 'pdf',
-          tag: 'Marketing',
-          owner: ' Sara ',
+          owners: [' Sara ', 'Sara', 'sara@acme.test', ''],
           updatedFrom: '2026-09-28',
           updatedTo: '2026-10-04',
         },
@@ -37,23 +38,15 @@ describe('toSearchFilters', () => {
       scope: 'shared',
       q: 'pricing',
       type: 'pdf',
-      tag: ['marketing'],
-      owner: 'Sara',
+      owner: ['Sara', 'sara@acme.test'],
       updatedFrom: '2026-09-28',
       updatedTo: '2026-10-04',
     });
   });
 
   it('keeps the current scope and leaves out what the answer leaves empty', () => {
-    expect(toSearchFilters({ ...empty, keywords: '  ', owner: '' }, context)).toEqual({
+    expect(toSearchFilters({ ...empty, keywords: '  ', owners: ['', ' '] }, context)).toEqual({
       scope: 'mine',
-    });
-  });
-
-  it('turns a tag nobody uses into a keyword', () => {
-    expect(toSearchFilters({ ...empty, keywords: 'deck', tag: 'pricing' }, context)).toMatchObject({
-      q: 'deck pricing',
-      tag: undefined,
     });
   });
 
@@ -68,19 +61,26 @@ describe('toSearchFilters', () => {
 
   it('caps the lengths of keywords and owner', () => {
     const filters = toSearchFilters(
-      { ...empty, keywords: 'a'.repeat(300), owner: 'b'.repeat(300) },
+      { ...empty, keywords: 'a'.repeat(300), owners: ['b'.repeat(300)] },
       context,
     );
     expect(filters.q).toHaveLength(200);
-    expect(filters.owner).toHaveLength(100);
+    expect(filters.owner?.[0]).toHaveLength(100);
   });
 });
 
+it('keeps at most as many owners as the filter takes', () => {
+  const owners = Array.from({ length: 15 }, (_, i) => `person ${i}`);
+  expect(toSearchFilters({ ...empty, owners }, context).owner).toHaveLength(10);
+});
+
 describe('searchPrompt', () => {
-  it('gives the date, tab and tags, with the user text in untrusted blocks', () => {
+  it('gives the date, tab and owners, with the user text in untrusted blocks', () => {
     const prompt = searchPrompt(context);
     expect(prompt).toContain('Today is 2026-10-04 (UTC). The current tab is "mine".');
-    expect(prompt).toContain('<untrusted_content source="tags">\nmarketing, q3 launch\n');
+    expect(prompt).toContain(
+      '<untrusted_content source="owners">\nSara Lee <sara@acme.test>\nTom Ray <tom@acme.test>\n',
+    );
     expect(prompt).toContain(
       '<untrusted_content source="search">\nthe pricing deck Sara shared last week\n',
     );

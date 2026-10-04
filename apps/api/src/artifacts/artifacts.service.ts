@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
+  ARTIFACT_OWNER_LIST_MAX,
   ARTIFACT_TAG_LIST_MAX,
   type ArtifactListSort,
   type CreateArtifactMetadata,
@@ -44,12 +45,14 @@ import type {
   ArtifactView,
   ContentIdentity,
   NewContent,
+  OwnerSummary,
   ResolvedArtifact,
   StoredContent,
   TagCount,
   TagListOptions,
 } from './artifacts.types.js';
 import { prefixTsquery } from './search/prefix-tsquery.js';
+import type { SearchMatch } from './search/search.types.js';
 
 const idSchema = z.guid();
 const VERSION_NO = /^[1-9]\d{0,8}$/;
@@ -341,7 +344,25 @@ export class ArtifactsService {
    * without one, the most relevant first when searching, otherwise the most recently updated.
    */
   async list(actor: Actor, options: ArtifactListOptions): Promise<ArtifactPage> {
-    const { qb, tsquery } = this.filtered(actor, options);
+    const page = await this.listMatching(actor, options, 'all');
+    // A search where every word must match can come up empty because of one odd word: then
+    // list what matches any of them, best first, rather than nothing.
+    if (
+      page.total === 0 &&
+      options.search &&
+      prefixTsquery(options.search, 'any') !== prefixTsquery(options.search)
+    ) {
+      return this.listMatching(actor, options, 'any');
+    }
+    return page;
+  }
+
+  private async listMatching(
+    actor: Actor,
+    options: ArtifactListOptions,
+    match: SearchMatch,
+  ): Promise<ArtifactPage> {
+    const { qb, tsquery } = this.filtered(actor, options, match);
     qb.innerJoinAndSelect('artifact.owner', 'owner')
       .leftJoinAndSelect('artifact.currentVersion', 'currentVersion')
       // Joins are to-one, so OFFSET/LIMIT count artifacts, not joined rows.
@@ -391,10 +412,33 @@ export class ArtifactsService {
     );
   }
 
+  /**
+   * The people whose artifacts the actor can see, other than the actor, the most artifacts
+   * first, at most `limit`: the AI search reads names against them.
+   */
+  async listOwners(actor: Actor, limit = ARTIFACT_OWNER_LIST_MAX): Promise<OwnerSummary[]> {
+    const { qb } = this.filtered(actor, {});
+    const rows = await qb
+      .innerJoin('artifact.owner', 'owner')
+      .andWhere('owner.id != :me', { me: actor.userId })
+      .select('owner.displayName', 'displayName')
+      .addSelect('owner.email', 'email')
+      .addSelect('count(*)', 'count')
+      .groupBy('owner.id')
+      .addGroupBy('owner.displayName')
+      .addGroupBy('owner.email')
+      .orderBy('count', 'DESC')
+      .addOrderBy('owner.displayName', 'ASC')
+      .limit(limit)
+      .getRawMany<OwnerSummary>();
+    return rows.map(({ displayName, email }) => ({ displayName, email }));
+  }
+
   /** Published artifacts the actor may view, narrowed by `filters`. */
   private filtered(
     actor: Actor,
     filters: ArtifactFilters,
+    match: SearchMatch = 'all',
   ): { qb: SelectQueryBuilder<Artifact>; tsquery: string | null } {
     const qb = this.artifacts.createQueryBuilder('artifact').where("artifact.status = 'published'");
     this.access.restrictToViewable(qb, 'artifact', actor);
@@ -423,17 +467,20 @@ export class ArtifactsService {
     if (filters.tags?.length) {
       qb.andWhere('artifact.tags @> ARRAY[:...tags]::text[]', { tags: filters.tags });
     }
-    if (filters.ownedBy) {
-      qb.andWhere('artifact.ownerId = :ownedBy', { ownedBy: filters.ownedBy });
+    if (filters.ownedBy?.length) {
+      qb.andWhere('artifact.ownerId IN (:...ownedBy)', { ownedBy: filters.ownedBy });
     }
-    if (filters.owner) {
+    if (filters.owners?.length) {
       // Only narrows what the actor can already see, whose owners' names are shown on it.
       qb.andWhere(
         `EXISTS (SELECT 1 FROM users owner_filter
                  WHERE owner_filter.id = artifact.owner_id
-                   AND (owner_filter.display_name ILIKE :ownerPattern
-                        OR owner_filter.email = :ownerEmail))`,
-        { ownerPattern: `%${escapeLike(filters.owner)}%`, ownerEmail: filters.owner },
+                   AND (owner_filter.display_name ILIKE ANY(CAST(:ownerPatterns AS text[]))
+                        OR owner_filter.email = ANY(CAST(:ownerEmails AS text[]))))`,
+        {
+          ownerPatterns: filters.owners.map((owner) => `%${escapeLike(owner)}%`),
+          ownerEmails: filters.owners,
+        },
       );
     }
     if (filters.updatedFrom) {
@@ -446,7 +493,7 @@ export class ArtifactsService {
         updatedTo: filters.updatedTo,
       });
     }
-    const tsquery = filters.search ? prefixTsquery(filters.search) : null;
+    const tsquery = filters.search ? prefixTsquery(filters.search, match) : null;
     if (tsquery) {
       qb.andWhere(`artifact.searchVector @@ to_tsquery('english', :tsquery)`, { tsquery });
     }

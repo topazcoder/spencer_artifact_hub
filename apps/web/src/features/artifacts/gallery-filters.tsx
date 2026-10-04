@@ -24,9 +24,9 @@ import { formatUpdatedRange } from '@/lib/format.ts';
 import { useMediaQuery } from '@/lib/use-media-query.ts';
 import { SCOPE_LABELS, TYPE_FILTER_LABELS } from './artifact-types.ts';
 import type { GalleryFilters as Filters } from './artifacts.types.ts';
-import { useUser } from '@/features/sharing/use-sharing.ts';
+import { useUsers } from '@/features/sharing/use-sharing.ts';
 import { AiSearchDialog } from './ai-search-dialog.tsx';
-import { OwnerPicker } from './owner-picker.tsx';
+import { OwnerPicker, type PickedOwner } from './owner-picker.tsx';
 import { TagPicker } from './tag-picker.tsx';
 
 const TYPE_FILTERS = Object.keys(ARTIFACT_TYPE_FILTERS) as ArtifactTypeFilter[];
@@ -52,7 +52,15 @@ export function hasFilters({
   updatedFrom,
   updatedTo,
 }: Filters): boolean {
-  return Boolean(q || type || tag?.length || owner || ownerId || updatedFrom || updatedTo);
+  return Boolean(
+    q || type || tag?.length || owner?.length || ownerId?.length || updatedFrom || updatedTo,
+  );
+}
+
+/** `items` without `item`; undefined when nothing is left, which is how a filter is cleared. */
+function without(items: readonly string[] | undefined, item: string): string[] | undefined {
+  const rest = (items ?? []).filter((other) => other !== item);
+  return rest.length > 0 ? rest : undefined;
 }
 
 /**
@@ -76,7 +84,7 @@ export function GalleryFilters({
   const [pending, setPending] = useState(false);
   const [shownQ, setShownQ] = useState(filters.q);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const { data: owner } = useUser(filters.ownerId);
+  const owners = useUsers(filters.ownerId ?? []);
   const { data: config } = useAppConfig();
   const smart = config?.features.ai ?? false;
 
@@ -111,11 +119,20 @@ export function GalleryFilters({
 
   const active = hasFilters(filters);
   const updated = formatUpdatedRange(filters.updatedFrom, filters.updatedTo);
+  /** Owners picked by hand (by id) and the ones an AI search matched by name or email. */
+  const pickedOwners: PickedOwner[] = [
+    ...(filters.ownerId ?? []).map((id, index) => ({
+      key: id,
+      label: owners[index]?.data?.displayName ?? 'this owner',
+      remove: () => apply({ ownerId: without(filters.ownerId, id) }),
+    })),
+    ...(filters.owner ?? []).map((name) => ({
+      key: `name:${name}`,
+      label: name,
+      remove: () => apply({ owner: without(filters.owner, name) }),
+    })),
+  ];
   const chips = [
-    filters.ownerId
-      ? { label: `By ${owner?.displayName ?? 'this owner'}`, clear: { ownerId: undefined } }
-      : null,
-    filters.owner ? { label: `By ${filters.owner}`, clear: { owner: undefined } } : null,
     updated ? { label: updated, clear: { updatedFrom: undefined, updatedTo: undefined } } : null,
   ].filter((chip) => chip !== null);
   const controls = (
@@ -157,10 +174,15 @@ export function GalleryFilters({
         selected={filters.tag ?? []}
         onChange={(tag) => apply({ tag: tag.length > 0 ? tag : undefined })}
       />
-      {filters.scope === 'mine' || filters.ownerId || filters.owner ? null : (
+      {filters.scope === 'mine' && pickedOwners.length === 0 ? null : (
         <OwnerPicker
           key={`owner-${filters.scope}`}
-          onPick={(user) => apply({ ownerId: user.id })}
+          selected={pickedOwners}
+          onPick={(user) => {
+            if (!filters.ownerId?.includes(user.id)) {
+              apply({ ownerId: [...(filters.ownerId ?? []), user.id] });
+            }
+          }}
         />
       )}
       <NativeSelect

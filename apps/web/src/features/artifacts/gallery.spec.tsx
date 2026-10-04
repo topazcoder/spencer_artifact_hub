@@ -286,12 +286,44 @@ describe('gallery', () => {
       await waitFor(() => expect(app.location()).toBe(`/?scope=public&ownerId=${grace.id}`));
       expect(api.calls(`GET /api/users/${grace.id}`)).toBe(1);
       await waitFor(() => expect(shown()).toEqual(['Compiler notes']));
-      expect(screen.getByRole('button', { name: 'Remove filter: By Grace Hopper' })).toBeTruthy();
-      expect(screen.queryByRole('textbox', { name: 'Owner' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Remove owner Grace Hopper' })).toBeTruthy();
+      // Another owner can be added.
+      expect(screen.getByRole('textbox', { name: 'Owner' })).toBeTruthy();
 
-      await user.click(screen.getByRole('button', { name: 'Remove filter: By Grace Hopper' }));
+      await user.click(screen.getByRole('button', { name: 'Remove owner Grace Hopper' }));
       expect(app.location()).toBe('/?scope=public');
       expect(screen.getByRole('textbox', { name: 'Owner' })).toBeTruthy();
+    });
+
+    it('filters by several owners, removing them one at a time', async () => {
+      const grace = api.addAccount('grace@example.com', 'correct horse', 'Grace Hopper');
+      const alan = api.addAccount('alan@example.com', 'correct horse', 'Alan Turing');
+      api.addArtifact(
+        artifact('Compiler notes', 0, { id: grace.id, displayName: grace.displayName }, 'public'),
+      );
+      api.addArtifact(
+        artifact('Machine notes', 1, { id: alan.id, displayName: alan.displayName }, 'public'),
+      );
+      api.addArtifact(artifact("Bob's public", 2, bob, 'public'));
+      const user = userEvent.setup();
+      const app = renderApp(`/?scope=public&ownerId=${grace.id}`);
+      await waitFor(() => expect(shown()).toEqual(['Compiler notes']));
+
+      const owner = screen.getByRole('textbox', { name: 'Owner' });
+      await user.type(owner, 'alan');
+      await waitFor(() =>
+        expect(document.querySelector('datalist option[value="alan@example.com"]')).toBeTruthy(),
+      );
+      fireEvent.change(owner, { target: { value: 'alan@example.com' } });
+
+      await waitFor(() =>
+        expect(app.location()).toBe(`/?scope=public&ownerId=${grace.id}&ownerId=${alan.id}`),
+      );
+      await waitFor(() => expect(shown().toSorted()).toEqual(['Compiler notes', 'Machine notes']));
+
+      await user.click(screen.getByRole('button', { name: 'Remove owner Grace Hopper' }));
+      expect(app.location()).toBe(`/?scope=public&ownerId=${alan.id}`);
+      await waitFor(() => expect(shown()).toEqual(['Machine notes']));
     });
 
     it('offers the owner filter only for shared and company artifacts', async () => {
@@ -302,7 +334,7 @@ describe('gallery', () => {
       const user = userEvent.setup();
       const app = renderApp(`/?scope=public&ownerId=${grace.id}`);
       const show = () => screen.getByRole('combobox', { name: 'Show' });
-      await screen.findByRole('button', { name: 'Remove filter: By Grace Hopper' });
+      await screen.findByRole('button', { name: 'Remove owner Grace Hopper' });
 
       // Switching to my artifacts drops an owner nobody else could be.
       await user.selectOptions(show(), 'mine');
@@ -321,9 +353,7 @@ describe('gallery', () => {
         artifact('Compiler notes', 0, { id: grace.id, displayName: grace.displayName }, 'public'),
       );
       renderApp(`/?scope=public&ownerId=${grace.id}`);
-      expect(
-        await screen.findByRole('button', { name: 'Remove filter: By Grace Hopper' }),
-      ).toBeTruthy();
+      expect(await screen.findByRole('button', { name: 'Remove owner Grace Hopper' })).toBeTruthy();
     });
 
     it('sorts by publish date or last update, recently updated first by default', async () => {
@@ -480,7 +510,7 @@ describe('gallery', () => {
           scope: scope as 'mine',
           q: 'deck',
           type: 'pdf',
-          owner: 'ada',
+          owner: ['ada'],
           updatedFrom: since,
         },
       }));
@@ -500,12 +530,12 @@ describe('gallery', () => {
       expect(screen.getByRole('button', { name: /^Remove filter: Updated since / })).toBeTruthy();
 
       // The owner an AI search found by name has no id: it shows as a removable chip.
-      await user.click(screen.getByRole('button', { name: 'Remove filter: By ada' }));
+      await user.click(screen.getByRole('button', { name: 'Remove owner ada' }));
       expect(app.location()).toBe(`/?q=deck&type=pdf&updatedFrom=${since}`);
     });
 
     it('moves to the tab the description asks for', async () => {
-      api.enableAi(() => ({ interpreted: true, filters: { scope: 'shared', owner: 'Bob' } }));
+      api.enableAi(() => ({ interpreted: true, filters: { scope: 'shared', owner: ['Bob'] } }));
       const user = userEvent.setup();
       const app = renderApp('/');
       await screen.findByText('3 artifacts');

@@ -14,6 +14,19 @@ describe('prefixTsquery', () => {
     expect(prefixTsquery(text)).toBe(query);
   });
 
+  it('treats words joined by | as alternatives', () => {
+    expect(prefixTsquery('Pricing|price|rates deck')).toBe(
+      '(pricing:* | price:* | rates:*) & deck:*',
+    );
+    expect(prefixTsquery('a|b|c|d|e|f|g')).toBe('(a:* | b:* | c:* | d:* | e:*)');
+  });
+
+  it('can match any word instead of all', () => {
+    expect(prefixTsquery('pricing|price deck', 'any')).toBe('pricing:* | price:* | deck:*');
+    expect(prefixTsquery('pricing', 'any')).toBe('pricing:*');
+    expect(prefixTsquery('&|!', 'any')).toBeNull();
+  });
+
   it.each(['', '   ', '&|!():*'])('returns null for %j', (text) => {
     expect(prefixTsquery(text)).toBeNull();
   });

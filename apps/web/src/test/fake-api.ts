@@ -343,8 +343,8 @@ export function installFakeApi() {
     const q = query.get('q');
     const type = query.get('type') as keyof typeof ARTIFACT_TYPE_FILTERS | null;
     const tags = query.getAll('tag');
-    const owner = query.get('owner')?.toLowerCase();
-    const ownerId = query.get('ownerId');
+    const owners = query.getAll('owner').map((owner) => owner.toLowerCase());
+    const ownerIds = query.getAll('ownerId');
     const from = query.get('updatedFrom');
     const to = query.get('updatedTo');
     const matching = inScope(query.get('scope') ?? 'mine')
@@ -357,8 +357,12 @@ export function installFakeApi() {
           ),
       )
       .filter((artifact) => tags.every((tag) => artifact.tags.includes(tag)))
-      .filter((artifact) => !ownerId || artifact.owner.id === ownerId)
-      .filter((artifact) => !owner || artifact.owner.displayName.toLowerCase().includes(owner))
+      .filter((artifact) => !ownerIds.length || ownerIds.includes(artifact.owner.id))
+      .filter(
+        (artifact) =>
+          !owners.length ||
+          owners.some((owner) => artifact.owner.displayName.toLowerCase().includes(owner)),
+      )
       .filter((artifact) => !from || artifact.updatedAt.slice(0, 10) >= from)
       .filter((artifact) => !to || artifact.updatedAt.slice(0, 10) <= to)
       .toSorted((a, b) => {

@@ -25,7 +25,6 @@ export const searchFiltersSchema = artifactListQuerySchema.pick({
   scope: true,
   q: true,
   type: true,
-  tag: true,
   owner: true,
   updatedFrom: true,
   updatedTo: true,
