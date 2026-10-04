@@ -63,6 +63,16 @@ export const envSchema = z
       .min(1)
       .max(24 * 60)
       .default(30),
+    /**
+     * How often the sweeper removes leftovers (unused blobs, abandoned drafts, expired upload
+     * sessions and idempotency keys). 0 turns it off (the e2e tests, which share a database).
+     */
+    SWEEP_INTERVAL_MINUTES: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(24 * 60)
+      .default(60),
     /** Largest artifact version accepted, enforced while the upload streams in. 10 MB by default. */
     MAX_ARTIFACT_BYTES: z.coerce
       .number()

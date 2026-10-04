@@ -50,6 +50,16 @@ import { prefixTsquery } from './search/prefix-tsquery.js';
 const idSchema = z.guid();
 const VERSION_NO = /^[1-9]\d{0,8}$/;
 
+/** A draft never uploaded is deleted this long after it was created (plan §8). */
+export const DRAFT_TTL_HOURS = 24;
+/**
+ * A blob no version points to is deleted once it is this old: by then its publish has either
+ * committed its version or failed. Much longer than any upload takes.
+ */
+export const UNUSED_BLOB_GRACE_MINUTES = 60;
+/** Storage keys checked against the versions table per query. */
+const BLOB_SWEEP_BATCH = 500;
+
 /** Artifacts and their versions. Every method takes the `Actor` and checks `AccessPolicy`. */
 @Injectable()
 export class ArtifactsService {
@@ -194,6 +204,54 @@ export class ArtifactsService {
     this.logger.info({ ...log, versionNo }, 'Version committed');
 
     return this.get(actor, artifact.id);
+  }
+
+  /**
+   * Maintenance, for the sweeper (no actor): deletes drafts created over `DRAFT_TTL_HOURS` ago
+   * that never got a version and have no upload link still open. Returns how many.
+   */
+  async deleteAbandonedDrafts(): Promise<number> {
+    const { affected } = await this.artifacts
+      .createQueryBuilder()
+      .delete()
+      .where("status = 'draft' AND latest_version_no = 0")
+      .andWhere('created_at < now() - make_interval(hours => :hours)', { hours: DRAFT_TTL_HOURS })
+      .andWhere(
+        `NOT EXISTS (SELECT 1 FROM upload_sessions session
+                     WHERE session.artifact_id = artifacts.id AND session.expires_at > now())`,
+      )
+      .execute();
+    return affected ?? 0;
+  }
+
+  /**
+   * Maintenance, for the sweeper (no actor): deletes artifact blobs no version points to, left
+   * by publishes that failed after storing their content. Soft-deleted artifacts keep theirs.
+   * Returns how many.
+   */
+  async deleteUnusedBlobs(): Promise<number> {
+    const olderThan = new Date(Date.now() - UNUSED_BLOB_GRACE_MINUTES * 60_000);
+    let deleted = 0;
+    let batch: string[] = [];
+    const sweep = async () => {
+      const used = await this.versions.find({
+        select: { storageKey: true },
+        where: { storageKey: In(batch) },
+      });
+      const usedKeys = new Set(used.map((version) => version.storageKey));
+      for (const key of batch) {
+        if (usedKeys.has(key)) continue;
+        await this.storage.delete(key);
+        deleted++;
+      }
+      batch = [];
+    };
+    for await (const { key } of this.storage.list(blobKeys.artifactsPrefix, olderThan)) {
+      batch.push(key);
+      if (batch.length === BLOB_SWEEP_BATCH) await sweep();
+    }
+    if (batch.length > 0) await sweep();
+    return deleted;
   }
 
   /** The versions the actor may see (all, unless a share limits them), newest first. */

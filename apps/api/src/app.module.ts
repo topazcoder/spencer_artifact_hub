@@ -16,6 +16,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
 import { McpModule } from './mcp/mcp.module.js';
 import { SharingModule } from './sharing/sharing.module.js';
+import { SweeperModule } from './sweeper/sweeper.module.js';
 import { UploadSessionsModule } from './uploads/sessions/upload-sessions.module.js';
 import { WebModule } from './web/web.module.js';
 
@@ -39,6 +40,7 @@ export class AppModule {
         CommentsModule,
         UploadSessionsModule,
         McpModule,
+        SweeperModule,
         ClientConfigModule,
         HealthModule,
         WebModule.register(env.WEB_DIST_DIR),

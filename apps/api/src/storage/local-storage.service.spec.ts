@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -31,6 +31,26 @@ async function listFiles(dir: string): Promise<string[]> {
     .filter((entry) => entry.isFile())
     .map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name)))
     .toSorted();
+}
+
+/** A minute from now: everything already written is older. */
+const later = () => new Date(Date.now() + 60_000);
+
+/** Backdates a file under `root`, as if written two hours ago. */
+async function age(root: string, relative: string) {
+  const twoHoursAgo = new Date(Date.now() - 2 * 3600_000);
+  await utimes(path.join(root, relative), twoHoursAgo, twoHoursAgo);
+}
+
+/** The keys `storage.list` finds, sorted. */
+async function listedKeys(
+  storage: LocalStorageService,
+  prefix: string,
+  olderThan: Date,
+): Promise<string[]> {
+  const found: string[] = [];
+  for await (const { key } of storage.list(prefix, olderThan)) found.push(key);
+  return found.toSorted();
 }
 
 describe('LocalStorageService', () => {
@@ -128,6 +148,43 @@ describe('LocalStorageService', () => {
       await storage.delete('k');
       expect(await storage.stat('k')).toBeNull();
       await expect(storage.delete('k')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('list and deleteIncompleteWrites', () => {
+    const HOUR_AGO = new Date(Date.now() - 3600_000);
+
+    it('lists the blobs under a prefix written before a time', async () => {
+      await storage.put('artifacts/a/1-x', body('old'), OPTS);
+      await storage.put('artifacts/b/1-y', body('new'), OPTS);
+      await storage.put('health/probe', body('other prefix'), OPTS);
+      await age(root, 'artifacts/a/1-x');
+
+      expect(await listedKeys(storage, 'artifacts', HOUR_AGO)).toEqual(['artifacts/a/1-x']);
+      expect(await listedKeys(storage, 'artifacts', later())).toEqual([
+        'artifacts/a/1-x',
+        'artifacts/b/1-y',
+      ]);
+    });
+
+    it('lists nothing for a prefix with no blobs, and refuses an invalid prefix', async () => {
+      expect(await listedKeys(storage, 'artifacts', later())).toEqual([]);
+      await expect(listedKeys(storage, '../outside', later())).rejects.toBeInstanceOf(
+        InvalidBlobKeyError,
+      );
+    });
+
+    it('deletes old temporary files only, leaving blobs and recent writes alone', async () => {
+      await storage.put('artifacts/a/1-x', body('blob'), OPTS);
+      await mkdir(path.join(root, 'artifacts/b'), { recursive: true });
+      await writeFile(path.join(root, 'artifacts/b/1-y.abc.tmp'), 'crashed');
+      await writeFile(path.join(root, 'artifacts/b/2-z.def.tmp'), 'still writing');
+      await age(root, 'artifacts/a/1-x');
+      await age(root, 'artifacts/b/1-y.abc.tmp');
+
+      expect(await listedKeys(storage, 'artifacts', later())).toEqual(['artifacts/a/1-x']);
+      expect(await storage.deleteIncompleteWrites(HOUR_AGO)).toBe(1);
+      expect(await listFiles(root)).toEqual(['artifacts/a/1-x', 'artifacts/b/2-z.def.tmp']);
     });
   });
 

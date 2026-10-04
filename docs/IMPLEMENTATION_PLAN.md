@@ -349,7 +349,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 
 ### Consistency
 - Order of operations: blob first, then DB transaction. On DB failure the blob is deleted on a best-effort basis.
-- An hourly sweeper deletes blobs with no version row (older than 1 h), expired drafts, expired upload sessions and idempotency keys.
+- An hourly sweeper deletes blobs with no version row (older than 1 h) and temporary files of writes cut short, drafts never uploaded (after 24 h, unless an upload link is still open), upload sessions a day after they expired (so the upload page can still say "expired") and idempotency keys older than 24 h. Each module that owns the data decides what is a leftover; the sweeper only runs their cleanups.
 - AI jobs are rows in `ai_jobs`, processed by an in-process worker (with retry and backoff, max 3 attempts); pending jobs are resumed on boot. No external queue is needed for this scale.
 
 ---
@@ -485,6 +485,7 @@ STORAGE_DRIVER=local, STORAGE_LOCAL_ROOT=/data/blobs
 SHARE_LINK_KEY                     (32 bytes, base64: `openssl rand -base64 32`; encrypts share link tokens; required in production, a fixed dev-only key otherwise)
 MAX_ARTIFACT_BYTES=10485760
 UPLOAD_SESSION_TTL_MINUTES=30
+SWEEP_INTERVAL_MINUTES=60            (0 turns the sweeper off; the e2e tests do, as suites share a database)
 AI_ENABLED=true, ANTHROPIC_API_KEY, AI_MODEL_FAST, AI_MODEL_SMART  (all optional; app runs without them)
 AI_TIMEOUT_MS=8000, AI_CIRCUIT_FAILURE_THRESHOLD=5, AI_CIRCUIT_COOLDOWN_SECONDS=60
 RATE_LIMIT_LOGIN_PER_IP=20, RATE_LIMIT_LOGIN_PER_EMAIL=10, RATE_LIMIT_LOGIN_WINDOW_SECONDS=900
@@ -560,7 +561,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 
 **Hardening**
 22. ✅ `Idempotency-Key` header and MCP dedupe. (`common/idempotency/`: `IdempotencyService.run` claims the key with one `INSERT … ON CONFLICT`, which also takes over a key older than 24 h, then does the work; the key is released if it fails, so only success is remembered. A repeat while the first is running, or with another route or body, is a `409`. The fingerprint is a hash of the validated input as canonical JSON; for uploads, of the metadata and the filename, not the file's bytes (only a bug in our own client could reuse a key for another file). Replays answer with the resource as it is now (like an upload session's repeat), with `Idempotent-Replayed: true`, so the table keeps no copies of responses. The web app sends a key per submission (`submissionKey`, one per mutation variables object) on publish, new version and comment, and retries those on network and server errors. Sharing with people takes no key: sharing again only updates the person's row. MCP: `publish_artifact` returns the user's artifact whose v1 has the same bytes and format from the last 10 minutes (`deduplicated: true`); `update_artifact` adds no version when the content equals the current version (`unchanged: true`), still applying new details; `add_comment` returns the same comment (author, version, parent, body) from the last 2 minutes.)
-23. Sweeper.
+23. ✅ Sweeper. (`SweeperService` runs the cleanups of the modules that own the data: `ArtifactsService.deleteUnusedBlobs` (storage keys under `artifacts/` older than 1 h that no version has, checked 500 at a time; soft-deleted artifacts keep theirs) and `deleteAbandonedDrafts`, `UploadSessionsService.deleteExpired`, `IdempotencyService.deleteExpired`, and the storage driver's `deleteIncompleteWrites` for `*.tmp` files left by a crash. These maintenance methods take no `Actor` and are never exposed (CLAUDE.md). The first sweep runs a minute after boot, so frequent redeploys don't keep putting it off, then every `SWEEP_INTERVAL_MINUTES`; the next is scheduled when one ends, so they never overlap on the one replica. A failing cleanup is logged and the others still run; each sweep logs its counts. `StorageDriver` gained `list(prefix, olderThan)` and `deleteIncompleteWrites(olderThan)`.)
 
 **AI**
 24. `AiService` with its Noop fallback, circuit breaker and `/api/config`.

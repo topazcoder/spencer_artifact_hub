@@ -6,7 +6,7 @@ import {
   type UploadSessionPurpose,
 } from '@artifact-hub/shared';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { IsNull, MoreThan, type Repository } from 'typeorm';
+import { IsNull, LessThan, MoreThan, type Repository } from 'typeorm';
 import { ArtifactsService } from '../../artifacts/artifacts.service.js';
 import type { ArtifactView, NewContent } from '../../artifacts/artifacts.types.js';
 import type { Actor } from '../../auth/auth.types.js';
@@ -20,6 +20,12 @@ import { InjectEnv } from '../../config/config.module.js';
 import type { Env } from '../../config/config.types.js';
 import { UploadSession } from './upload-session.entity.js';
 import type { IssuedUploadSession } from './upload-sessions.types.js';
+
+/**
+ * An expired session is kept this long, so its upload page says "expired" rather than
+ * "doesn't work", then the sweeper deletes it.
+ */
+export const EXPIRED_SESSION_RETENTION_HOURS = 24;
 
 /** Said for a token that doesn't exist and for someone else's: existence isn't revealed. */
 const NOT_FOUND_MESSAGE = "This upload link doesn't work. Ask your assistant for a new one.";
@@ -147,6 +153,16 @@ export class UploadSessionsService {
     );
     this.logger.info({ ...log, versionNo: view.latestVersionNo }, 'Upload session consumed');
     return view;
+  }
+
+  /**
+   * Maintenance, for the sweeper (no actor): deletes sessions that expired over
+   * `EXPIRED_SESSION_RETENTION_HOURS` ago. Returns how many.
+   */
+  async deleteExpired(): Promise<number> {
+    const cutoff = new Date(Date.now() - EXPIRED_SESSION_RETENTION_HOURS * 3600_000);
+    const { affected } = await this.sessions.delete({ expiresAt: LessThan(cutoff) });
+    return affected ?? 0;
   }
 
   /** The live session for `token` if the actor owns it; `NOT_FOUND` otherwise. */

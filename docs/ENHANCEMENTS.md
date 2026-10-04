@@ -54,6 +54,7 @@ Known limitations of the current build, and planned improvements.
 - Serve user content from a separate domain (`usercontent.<domain>`) as defense in depth beyond the CSP sandbox.
 - Multi-file HTML bundles (zip upload with asset rewriting).
 - Server-generated thumbnails.
+- Stream the local driver's file listing (`opendir` with `recursive: true`): today `list` and `deleteIncompleteWrites` read the whole tree into memory before the sweeper checks the first file. Fine for thousands of files, not for hundreds of thousands. Object storage's paged listing (and lifecycle rules) replaces it at real scale.
 
 ## Platform
 - Horizontal scaling (requires object storage instead of a local volume, and a real job queue).

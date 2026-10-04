@@ -29,6 +29,7 @@ describe('parseEnv', () => {
       STORAGE_DRIVER: 'local',
       STORAGE_LOCAL_ROOT: '.data/blobs',
       UPLOAD_SESSION_TTL_MINUTES: 30,
+      SWEEP_INTERVAL_MINUTES: 60,
       MAX_ARTIFACT_BYTES: 10_485_760,
       SHARE_LINK_KEY: Buffer.from('dev-only-share-link-key-32-bytes').toString('base64'),
     });

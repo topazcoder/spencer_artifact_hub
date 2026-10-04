@@ -8,7 +8,7 @@ import {
 } from '@artifact-hub/shared';
 import type { Request } from 'express';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { IsNull, type Repository } from 'typeorm';
+import { IsNull, LessThan, type Repository } from 'typeorm';
 import type { Actor } from '../../auth/auth.types.js';
 import { AppError } from '../errors/app-error.js';
 import { IdempotencyKey } from './idempotency-key.entity.js';
@@ -79,6 +79,16 @@ export class IdempotencyService {
       this.logger.warn({ ...log, err }, 'Could not record the result of an idempotent request');
     }
     return outcome.result;
+  }
+
+  /**
+   * Maintenance, for the sweeper (no actor): deletes keys older than
+   * `IDEMPOTENCY_KEY_TTL_HOURS`, which already count as unused. Returns how many.
+   */
+  async deleteExpired(): Promise<number> {
+    const cutoff = new Date(Date.now() - IDEMPOTENCY_KEY_TTL_HOURS * 3600_000);
+    const { affected } = await this.keys.delete({ createdAt: LessThan(cutoff) });
+    return affected ?? 0;
   }
 
   /** The key on the request, or null if there is none. `VALIDATION_FAILED` unless a UUID. */
