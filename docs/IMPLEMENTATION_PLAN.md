@@ -256,8 +256,8 @@ Tool descriptions are written the way users ask for things, and each says when t
 | `publish_artifact` | "Publish this mockup / share this report with the team" | `title`, `description`, `tags` (all required), `visibility`, `content?` (text formats only: HTML/SVG/MD) | Without `content`, creates a **draft** and returns `upload_url` + `upload_command` (see below) |
 | `update_artifact` | "Here's the revised version", "rename it / change tags / make it public" | `artifact` (id or URL), `content?` (text) **or** `request_upload: true` (binary), `change_note`, optional metadata | New content creates a new version; metadata-only changes don't |
 | `find_artifacts` | "Find the pricing deck Sara shared last week" | `query` (natural language), optional `owner: me/shared_with_me/anyone`, `type`, `tags` | NL query is converted to filters + full-text search |
-| `get_artifact` | "What's the status of the onboarding mockup?" | `artifact`, optional `version` | Metadata, versions, access summary, open-comment count, latest feedback summary |
-| `get_feedback` | "What did reviewers say about v2? Anything unresolved?" | `artifact`, `version?`, `include: summary/open/all` | AI summary + raw threads; comment bodies are marked as **untrusted user content** |
+| `get_artifact` | "What's the status of the onboarding mockup?" | `artifact`, optional `version` | Metadata, versions, access summary, open and resolved comment counts |
+| `get_feedback` | "What did reviewers say about v2? Anything unresolved?" | `artifact`, `version?`, `include: open/all` (default `open`) | Raw threads with counts per version, no server-side summary: the calling agent summarizes them for what the user actually asked. Comment bodies are marked as **untrusted user content**. The number of threads is capped; a capped result says so and the agent narrows by `version` / `include` |
 | `add_comment` | "Tell them the header looks off", "reply to Sara's comment" | `artifact`, `body`, `version?`, `reply_to?` | |
 | `resolve_comment` | "Mark my comment about the logo as resolved" | `comment_id`, `resolved: bool` | Allowed only for the comment's author |
 | `share_artifact` | "Give Sara and Tom comment access", "share it with the whole company", "make a link for the client for 7 days" | `artifact`, `with: people/company/link`, `emails?`, `permission?`, `version?`, `expires_in_days?` (link only) | Unknown emails are returned as a readable error listing which ones aren't registered; a link result includes the URL |
@@ -300,7 +300,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | Feature | Where it shows up | How |
 |---|---|---|
 | **Metadata suggestions** | Web upload form pre-fill; async fill of blanks | Fast model. HTML/MD/SVG → extracted text; images → vision input; PDF → document input. Structured output validated by zod (title ≤ 120, description ≤ 500, ≤ 8 tags, normalized lowercase). Reuses existing tags when relevant |
-| **Feedback summary** | "Feedback" tab header on each artifact; `get_feedback` | Smart model. Groups comments into themes, marks resolved vs. open, highlights disagreements; per version or across versions. Cached in `feedback_summaries`, regenerated when new comments exist (watermark) |
+| **Feedback summary** | "Feedback" tab header on each artifact (web UI only: MCP returns raw threads, and the calling agent summarizes them for the user's question, so comments don't pass through two LLMs) | Smart model. Groups comments into themes, marks resolved vs. open, highlights disagreements; per version or across versions. Cached in `feedback_summaries`, regenerated when new comments exist (watermark) |
 | **Natural-language search** | Gallery search bar; `find_artifacts` | Fast model turns the query into `{ keywords, tags, type, owner, date range }` → Postgres full-text search + filters. Falls back to plain full-text search if the LLM fails. No extra embeddings provider needed |
 
 ### 9.1 Graceful degradation (AI not configured or failing)
@@ -319,7 +319,6 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | Async fill of blank metadata | Job not enqueued; fields stay empty | Job retries up to 3 times with backoff, then marked `failed`; artifact stays published and fully usable |
 | Feedback summary | Panel hidden; raw comment threads shown as usual | Last cached summary is shown with an "outdated" badge, or the panel is hidden with "Summary unavailable"; threads always shown |
 | Natural-language search | Search bar does plain full-text search + filter controls | Falls back to plain full-text search on the raw query (logged); results are never empty because of AI failure |
-| MCP `get_feedback` / `get_artifact` | Return raw comments; `summary: null` with `summary_unavailable_reason` | Same, so the client agent can summarize the raw comments itself |
 | MCP `find_artifacts` | Plain full-text search | Plain full-text search |
 
 **Tests:** the e2e suite runs the core flows with `NoopAiService`, and there's a test with a failing AI stub (it throws or hangs) to verify that publish, search and feedback still succeed.
@@ -564,7 +563,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 **AI**
 24. `AiService` with its Noop fallback, circuit breaker and `/api/config`.
 25. Metadata suggestions and the background job that fills blank fields.
-26. Feedback summary.
+26. Feedback summary in the Feedback tab (web UI only; MCP `get_feedback` returns raw threads).
 27. Natural-language search.
 
 **Ship**
