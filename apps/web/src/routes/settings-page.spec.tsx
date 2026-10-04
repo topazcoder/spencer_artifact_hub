@@ -23,11 +23,10 @@ describe('Settings page', () => {
     vi.unstubAllGlobals();
   });
 
-  it('is reached from the account menu', async () => {
+  it('is reached from the sidebar', async () => {
     const user = userEvent.setup();
     const app = renderApp('/');
-    await user.click(await screen.findByRole('button', { name: 'Account menu' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Settings' }));
+    await user.click(await screen.findByRole('link', { name: 'Settings' }));
     expect(app.location()).toBe('/settings');
     expect(await screen.findByRole('heading', { name: 'API tokens' })).toBeTruthy();
   });
@@ -71,6 +70,13 @@ describe('Settings page', () => {
     const writeText = vi.spyOn(navigator.clipboard, 'writeText');
     await user.click(screen.getByRole('button', { name: 'Copy token' }));
     expect(writeText).toHaveBeenCalledWith(secret);
+
+    await user.click(screen.getByRole('button', { name: 'Copy Claude Code command with token' }));
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`Authorization: Bearer ${secret}`),
+    );
+    await user.click(screen.getByRole('button', { name: 'Copy Claude Desktop config with token' }));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`Bearer ${secret}`));
 
     await user.click(screen.getByRole('button', { name: 'Done' }));
     expect(screen.queryByLabelText('New API token')).toBeNull();

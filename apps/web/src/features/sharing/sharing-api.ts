@@ -8,6 +8,7 @@ import {
   type SharePeopleRequest,
   type UpdatePersonAccessRequest,
   type UserSummary,
+  userResponseSchema,
   userSearchResponseSchema,
 } from '@artifact-hub/shared';
 import { artifactQueryKey } from '@/features/artifacts/artifacts-api.ts';
@@ -17,6 +18,7 @@ import type { ApiRequestOptions } from '@/lib/api/api.types.ts';
 /** Under the artifact's key, so it goes with the artifact's other queries. */
 export const accessQueryKey = (artifactId: string) =>
   [...artifactQueryKey(artifactId), 'access'] as const;
+export const userQueryKey = (id: string) => ['user', id] as const;
 export const userSearchQueryKey = (query: string) => ['user-search', query] as const;
 
 const accessPath = (artifactId: string) => `/artifacts/${encodeURIComponent(artifactId)}/access`;
@@ -101,4 +103,11 @@ export async function searchUsers(query: string, signal?: AbortSignal): Promise<
   const params = new URLSearchParams({ q: query });
   return (await apiRequest(`/users/search?${params}`, { schema: userSearchResponseSchema, signal }))
     .items;
+}
+
+/** One user, e.g. to name the owner a gallery filter was set to. */
+export async function fetchUser(id: string, signal?: AbortSignal): Promise<UserSummary> {
+  return (
+    await apiRequest(`/users/${encodeURIComponent(id)}`, { schema: userResponseSchema, signal })
+  ).user;
 }

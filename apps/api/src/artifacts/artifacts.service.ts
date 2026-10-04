@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   ARTIFACT_TAG_LIST_MAX,
+  type ArtifactListSort,
   type CreateArtifactMetadata,
   type CreateVersionMetadata,
   ErrorCode,
@@ -39,12 +40,14 @@ import type {
   ArtifactFilters,
   ArtifactListOptions,
   ArtifactPage,
+  ArtifactSortOrder,
   ArtifactView,
   ContentIdentity,
   NewContent,
   ResolvedArtifact,
   StoredContent,
   TagCount,
+  TagListOptions,
 } from './artifacts.types.js';
 import { prefixTsquery } from './search/prefix-tsquery.js';
 
@@ -60,6 +63,14 @@ export const DRAFT_TTL_HOURS = 24;
 export const UNUSED_BLOB_GRACE_MINUTES = 60;
 /** Storage keys checked against the versions table per query. */
 const BLOB_SWEEP_BATCH = 500;
+
+/** The column and direction of each list order. */
+const SORT_ORDERS: Record<ArtifactListSort, ArtifactSortOrder> = {
+  newest: { column: 'artifact.createdAt', direction: 'DESC' },
+  oldest: { column: 'artifact.createdAt', direction: 'ASC' },
+  updated_desc: { column: 'artifact.updatedAt', direction: 'DESC' },
+  updated_asc: { column: 'artifact.updatedAt', direction: 'ASC' },
+};
 
 /** Artifacts and their versions. Every method takes the `Actor` and checks `AccessPolicy`. */
 @Injectable()
@@ -326,8 +337,8 @@ export class ArtifactsService {
   }
 
   /**
-   * Published artifacts the actor may view, narrowed by `options`: the most relevant first when
-   * searching, otherwise the most recently updated.
+   * Published artifacts the actor may view, narrowed by `options`, in `options.sort` order:
+   * without one, the most relevant first when searching, otherwise the most recently updated.
    */
   async list(actor: Actor, options: ArtifactListOptions): Promise<ArtifactPage> {
     const { qb, tsquery } = this.filtered(actor, options);
@@ -336,14 +347,15 @@ export class ArtifactsService {
       // Joins are to-one, so OFFSET/LIMIT count artifacts, not joined rows.
       .offset((options.page - 1) * options.pageSize)
       .limit(options.pageSize);
-    if (tsquery) {
+    if (tsquery && !options.sort) {
       // Weighted by where words match: title (A) above tags, description and content. Not
       // ts_rank_cd: it rewards nearby words, and the end of one field sits next to the start
       // of the next in the vector.
       qb.orderBy(`ts_rank(artifact.searchVector, to_tsquery('english', :tsquery))`, 'DESC');
     }
     // `id` breaks ties, so the order (and therefore each page) is deterministic.
-    qb.addOrderBy('artifact.updatedAt', 'DESC').addOrderBy('artifact.id', 'DESC');
+    const { column, direction } = SORT_ORDERS[options.sort ?? 'updated_desc'];
+    qb.addOrderBy(column, direction).addOrderBy('artifact.id', direction);
 
     const [artifacts, total] = await qb.getManyAndCount();
     const grants = await this.grants.forArtifacts(
@@ -358,15 +370,24 @@ export class ArtifactsService {
     return { items, total };
   }
 
-  /** The tags of the artifacts `filters` cover, the most used first, for the gallery's filter. */
-  async listTags(actor: Actor, filters: ArtifactFilters): Promise<TagCount[]> {
+  /**
+   * The tags of the artifacts `filters` cover, the most used first, at most `limit`: the
+   * gallery's tag filter asks for a few at a time, searching by `search`.
+   */
+  async listTags(
+    actor: Actor,
+    filters: ArtifactFilters,
+    { search, limit = ARTIFACT_TAG_LIST_MAX }: TagListOptions = {},
+  ): Promise<TagCount[]> {
     const { qb } = this.filtered(actor, filters);
     const [scoped, parameters] = qb.select('artifact.tags', 'tags').getQueryAndParameters();
+    const matching = search ? `WHERE tag ILIKE $${parameters.length + 1}` : '';
     return this.dataSource.query(
       `SELECT tag, count(*)::int AS count
        FROM (${scoped}) scoped CROSS JOIN LATERAL unnest(scoped.tags) AS tag
-       GROUP BY tag ORDER BY count DESC, tag ASC LIMIT $${parameters.length + 1}`,
-      [...parameters, ARTIFACT_TAG_LIST_MAX],
+       ${matching}
+       GROUP BY tag ORDER BY count DESC, tag ASC LIMIT $${parameters.length + (search ? 2 : 1)}`,
+      [...parameters, ...(search ? [`%${escapeLike(search)}%`] : []), limit],
     );
   }
 
@@ -399,8 +420,11 @@ export class ArtifactsService {
         { mimeTypes: filters.mimeTypes },
       );
     }
-    if (filters.tag) {
-      qb.andWhere('artifact.tags @> ARRAY[:tag]::text[]', { tag: filters.tag });
+    if (filters.tags?.length) {
+      qb.andWhere('artifact.tags @> ARRAY[:...tags]::text[]', { tags: filters.tags });
+    }
+    if (filters.ownedBy) {
+      qb.andWhere('artifact.ownerId = :ownedBy', { ownedBy: filters.ownedBy });
     }
     if (filters.owner) {
       // Only narrows what the actor can already see, whose owners' names are shown on it.

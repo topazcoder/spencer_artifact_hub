@@ -1,5 +1,6 @@
 import {
   ARTIFACT_TITLE_MAX_LENGTH,
+  type ArtifactListScope,
   type ArtifactMimeType,
   type ArtifactTypeFilter,
 } from '@artifact-hub/shared';
@@ -31,6 +32,13 @@ export const TYPE_FILTER_LABELS: Record<ArtifactTypeFilter, string> = {
   pdf: 'PDF',
   markdown: 'Markdown',
   svg: 'SVG',
+};
+
+/** Labels of the gallery's scope filter. */
+export const SCOPE_LABELS: Record<ArtifactListScope, string> = {
+  mine: 'My artifacts',
+  shared: 'Shared with me',
+  public: 'Company',
 };
 
 export function typeLabel(mimeType: ArtifactMimeType): string {

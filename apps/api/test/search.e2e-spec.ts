@@ -166,6 +166,28 @@ describe('Search and filters (e2e)', () => {
       expect(await titles(ada, { q: word, tag: 'q3', type: 'html' })).toEqual([`Mockup ${word}`]);
     });
 
+    it('narrows by several tags at once: artifacts with all of them', async () => {
+      const res = (tags: string[]) =>
+        http()
+          .get('/api/artifacts')
+          .query({ q: word, tag: tags })
+          .set('Cookie', ada.cookie)
+          .expect(200);
+      const found = async (tags: string[]) =>
+        artifactListResponseSchema.parse((await res(tags)).body).items.map((item) => item.title);
+
+      expect(await found(['q3', 'sales'])).toEqual([`Deck ${word}`]);
+      expect((await found(['Q3'])).toSorted()).toEqual(
+        [`Deck ${word}`, `Mockup ${word}`].toSorted(),
+      );
+      expect(await found(['sales', 'nope'])).toEqual([]);
+      await http()
+        .get('/api/artifacts')
+        .query({ tag: Array.from({ length: 11 }, (_, i) => `t${i}`) })
+        .set('Cookie', ada.cookie)
+        .expect(400);
+    });
+
     it('narrows by owner: part of their name, any case, or their exact email', async () => {
       const sara = await users.create(`Sara ${word}`);
       await publish(sara, { title: `Report ${word}`, visibility: 'public' });
@@ -181,6 +203,23 @@ describe('Search and filters (e2e)', () => {
       // Not the start of an email, and wildcards match only themselves.
       expect(await titles(bob, { ...search, owner: sara.email.slice(0, 10) })).toEqual([]);
       expect(await titles(bob, { ...search, owner: '%' })).toEqual([]);
+    });
+
+    it('narrows by owner id, within the scope', async () => {
+      const sara = await users.create(`Sara ${word}`);
+      await publish(sara, { title: `Report ${word}`, visibility: 'public' });
+      await publish(ada, { title: `Notes ${word}`, visibility: 'public' });
+      const search = { q: word, scope: 'public' };
+
+      expect(await titles(bob, { ...search, ownerId: sara.id })).toEqual([`Report ${word}`]);
+      expect(await titles(bob, { ...search, ownerId: randomUUID() })).toEqual([]);
+      // The scope still applies: Sara's public artifact isn't in Bob's own.
+      expect(await titles(bob, { q: word, ownerId: sara.id })).toEqual([]);
+      await http()
+        .get('/api/artifacts')
+        .query({ ownerId: 'not-an-id' })
+        .set('Cookie', bob.cookie)
+        .expect(400);
     });
 
     it('narrows by the days it was last updated, inclusive (UTC)', async () => {
@@ -200,6 +239,42 @@ describe('Search and filters (e2e)', () => {
       );
     });
 
+    it('sorts by publish date or last update, the latest update first by default', async () => {
+      // Published in one order, last updated in the reverse.
+      await app.get(DataSource).query(
+        `UPDATE artifacts SET
+           created_at = CASE title
+             WHEN $1 THEN timestamptz '2026-01-10T00:00:00Z'
+             WHEN $2 THEN timestamptz '2026-01-11T00:00:00Z'
+             ELSE timestamptz '2026-01-12T00:00:00Z' END,
+           updated_at = CASE title
+             WHEN $1 THEN timestamptz '2026-02-12T00:00:00Z'
+             WHEN $2 THEN timestamptz '2026-02-11T00:00:00Z'
+             ELSE timestamptz '2026-02-10T00:00:00Z' END
+         WHERE title IN ($1, $2, $3)`,
+        [`Deck ${word}`, `Mockup ${word}`, `Chart ${word}`],
+      );
+      const oldestFirst = [`Deck ${word}`, `Mockup ${word}`, `Chart ${word}`];
+      // Other tests add artifacts with this word; only these three have fixed dates.
+      const mine = async (sort?: string) =>
+        (await titles(ada, { q: word, ...(sort ? { sort } : {}) })).filter((title) =>
+          oldestFirst.includes(title),
+        );
+      expect(await mine('oldest')).toEqual(oldestFirst);
+      expect(await mine('newest')).toEqual(oldestFirst.toReversed());
+      expect(await mine('updated_asc')).toEqual(oldestFirst.toReversed());
+      expect(await mine('updated_desc')).toEqual(oldestFirst);
+      expect(await mine()).toEqual(await mine('updated_desc'));
+    });
+
+    it('rejects unknown sorts', async () => {
+      await http()
+        .get('/api/artifacts')
+        .query({ sort: 'random' })
+        .set('Cookie', ada.cookie)
+        .expect(400);
+    });
+
     it('rejects invalid dates', async () => {
       await http()
         .get('/api/artifacts')
@@ -214,6 +289,21 @@ describe('Search and filters (e2e)', () => {
         .query({ type: 'video' })
         .set('Cookie', ada.cookie)
         .expect(400);
+    });
+  });
+
+  describe('GET /api/users/:id', () => {
+    it('returns the user, for a signed-in caller only', async () => {
+      const res = await http().get(`/api/users/${bob.id}`).set('Cookie', ada.cookie).expect(200);
+      expect(res.body).toEqual({
+        user: { id: bob.id, displayName: bob.displayName, email: bob.email },
+      });
+      await http().get(`/api/users/${bob.id}`).expect(401);
+    });
+
+    it('answers not found for an unknown or malformed id', async () => {
+      await http().get(`/api/users/${randomUUID()}`).set('Cookie', ada.cookie).expect(404);
+      await http().get('/api/users/nope').set('Cookie', ada.cookie).expect(404);
     });
   });
 
@@ -233,6 +323,40 @@ describe('Search and filters (e2e)', () => {
         { tag: 'beta', count: 2 },
         { tag: 'alpha', count: 1 },
       ]);
+    });
+
+    it('searches the tags and returns only a few', async () => {
+      const erin = await users.create('Erin');
+      const prefix = uniqueWord();
+      const names = Array.from(
+        { length: 12 },
+        (_, i) => `${prefix}-t${String(i).padStart(2, '0')}`,
+      );
+      await publish(erin, { title: 'Many', tags: names.slice(0, 10) });
+      await publish(erin, { title: 'More', tags: names.slice(10) });
+      await publish(erin, { title: 'Other', tags: ['unrelated'] });
+      const tags = async (q?: string) =>
+        artifactTagListResponseSchema
+          .parse(
+            (
+              await http()
+                .get('/api/artifacts/tags')
+                .query({ scope: 'mine', ...(q ? { q } : {}) })
+                .set('Cookie', erin.cookie)
+                .expect(200)
+            ).body,
+          )
+          .items.map((item) => item.tag);
+
+      // Without a search, a few: the cap is 10 of the 13 tags.
+      expect(await tags()).toHaveLength(10);
+      // Containing the text, any case, and still capped.
+      expect(await tags(prefix.toUpperCase())).toHaveLength(10);
+      expect(await tags(`${prefix}-T11`)).toEqual([`${prefix}-t11`]);
+      expect(await tags('unrel')).toEqual(['unrelated']);
+      // Wildcards match only themselves.
+      expect(await tags('%')).toEqual([]);
+      expect(await tags('no-such-tag')).toEqual([]);
     });
 
     it('never includes tags of artifacts the user may not see', async () => {

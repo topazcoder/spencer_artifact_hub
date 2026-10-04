@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { Artifact, ArtifactMimeType, User } from '@artifact-hub/shared';
-import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeApi } from '@/test/fake-api.ts';
@@ -130,9 +130,10 @@ describe('gallery', () => {
     const app = renderApp('/');
 
     expect(await screen.findByRole('heading', { name: 'My artifacts', level: 1 })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Mine' }).getAttribute('aria-current')).toBe('page');
+    const show = () => screen.getByRole('combobox', { name: 'Show' }) as HTMLSelectElement;
+    expect(show().value).toBe('mine');
 
-    await user.click(screen.getByRole('link', { name: 'Company' }));
+    await user.selectOptions(show(), 'public');
     expect(app.location()).toBe('/?scope=public');
     expect(
       await screen.findByRole('heading', { name: 'Shared with the company', level: 1 }),
@@ -142,9 +143,9 @@ describe('gallery', () => {
       'My public',
       "Bob's public",
     ]);
-    expect(screen.getByRole('link', { name: 'Company' }).getAttribute('aria-current')).toBe('page');
+    expect(show().value).toBe('public');
 
-    await user.click(screen.getByRole('link', { name: 'Mine' }));
+    await user.selectOptions(show(), 'mine');
     expect(app.location()).toBe('/');
   });
 
@@ -178,7 +179,9 @@ describe('gallery', () => {
     api.shareWith(shared.id, account);
     const app = renderApp('/');
 
-    await userEvent.setup().click(await screen.findByRole('link', { name: 'Shared with me' }));
+    await userEvent
+      .setup()
+      .selectOptions(await screen.findByRole('combobox', { name: 'Show' }), 'shared');
     expect(app.location()).toBe('/?scope=shared');
     expect(await screen.findByText('1 artifact')).toBeTruthy();
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
@@ -199,6 +202,59 @@ describe('gallery', () => {
       api.addArtifact(variant(artifact('Team photo', 3), 'image/png', ['team']));
     });
 
+    describe('on a small screen', () => {
+      beforeEach(() => {
+        // A phone: no media query matches, so the screen isn't "wide".
+        Object.defineProperty(window, 'matchMedia', {
+          configurable: true,
+          value: (query: string) => ({
+            matches: false,
+            media: query,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          }),
+        });
+      });
+
+      afterEach(() => {
+        Reflect.deleteProperty(window, 'matchMedia');
+      });
+
+      it('keeps the search in view and the other filters in a dialog opened by an icon', async () => {
+        const user = userEvent.setup();
+        const app = renderApp('/');
+        await screen.findByText('3 artifacts');
+        expect(screen.getByRole('searchbox', { name: 'Search' })).toBeTruthy();
+        expect(screen.queryByRole('combobox', { name: 'Type' })).toBeNull();
+
+        await user.click(screen.getByRole('button', { name: 'Filters' }));
+        const dialog = await screen.findByRole('dialog', { name: 'Filters' });
+        await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Type' }), 'PDF');
+        // Applied at once, and the dialog stays for the next filter.
+        expect(app.location()).toBe('/?type=pdf');
+        await user.selectOptions(
+          within(dialog).getByRole('combobox', { name: 'Sort by' }),
+          'updated_asc',
+        );
+        expect(app.location()).toBe('/?type=pdf&sort=updated_asc');
+        // Even when the scope changes, again and again, without repeating any field.
+        const show = within(dialog).getByRole('combobox', { name: 'Show' });
+        for (const scope of ['public', 'shared', 'mine', 'public']) {
+          await user.selectOptions(show, scope);
+          expect(screen.getByRole('dialog', { name: 'Filters' })).toBeTruthy();
+          expect(within(dialog).getAllByRole('combobox', { name: 'Filter by tags' })).toHaveLength(
+            1,
+          );
+          expect(within(dialog).queryAllByRole('textbox', { name: 'Owner' })).toHaveLength(
+            scope === 'mine' ? 0 : 1,
+          );
+        }
+
+        await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+        expect(screen.queryByRole('dialog', { name: 'Filters' })).toBeNull();
+      });
+    });
+
     it('searches as you type, keeping the search in the URL', async () => {
       const user = userEvent.setup();
       const app = renderApp('/');
@@ -208,6 +264,91 @@ describe('gallery', () => {
       await waitFor(() => expect(app.location()).toBe('/?q=pric+pag'));
       expect(await screen.findByText('1 artifact')).toBeTruthy();
       expect(shown()).toEqual(['Pricing page']);
+    });
+
+    it('filters by the owner picked from the matching users, sending their id', async () => {
+      const grace = api.addAccount('grace@example.com', 'correct horse', 'Grace Hopper');
+      const hopper = { id: grace.id, displayName: grace.displayName };
+      api.addArtifact(artifact('Compiler notes', 0, hopper, 'public'));
+      api.addArtifact(artifact("Bob's public", 1, bob, 'public'));
+      const user = userEvent.setup();
+      const app = renderApp('/?scope=public');
+      await screen.findByText('2 artifacts');
+
+      const owner = screen.getByRole('textbox', { name: 'Owner' });
+      await user.type(owner, 'grac');
+      await waitFor(() =>
+        expect(document.querySelector('datalist option[value="grace@example.com"]')).toBeTruthy(),
+      );
+      // Choosing a suggestion fills in its email.
+      fireEvent.change(owner, { target: { value: 'grace@example.com' } });
+
+      await waitFor(() => expect(app.location()).toBe(`/?scope=public&ownerId=${grace.id}`));
+      expect(api.calls(`GET /api/users/${grace.id}`)).toBe(1);
+      await waitFor(() => expect(shown()).toEqual(['Compiler notes']));
+      expect(screen.getByRole('button', { name: 'Remove filter: By Grace Hopper' })).toBeTruthy();
+      expect(screen.queryByRole('textbox', { name: 'Owner' })).toBeNull();
+
+      await user.click(screen.getByRole('button', { name: 'Remove filter: By Grace Hopper' }));
+      expect(app.location()).toBe('/?scope=public');
+      expect(screen.getByRole('textbox', { name: 'Owner' })).toBeTruthy();
+    });
+
+    it('offers the owner filter only for shared and company artifacts', async () => {
+      const grace = api.addAccount('grace@example.com', 'correct horse', 'Grace Hopper');
+      api.addArtifact(
+        artifact('Compiler notes', 0, { id: grace.id, displayName: grace.displayName }, 'public'),
+      );
+      const user = userEvent.setup();
+      const app = renderApp(`/?scope=public&ownerId=${grace.id}`);
+      const show = () => screen.getByRole('combobox', { name: 'Show' });
+      await screen.findByRole('button', { name: 'Remove filter: By Grace Hopper' });
+
+      // Switching to my artifacts drops an owner nobody else could be.
+      await user.selectOptions(show(), 'mine');
+      expect(app.location()).toBe('/');
+      expect(screen.queryByRole('textbox', { name: 'Owner' })).toBeNull();
+
+      await user.selectOptions(show(), 'shared');
+      expect(screen.getByRole('textbox', { name: 'Owner' })).toBeTruthy();
+      await user.selectOptions(show(), 'public');
+      expect(screen.getByRole('textbox', { name: 'Owner' })).toBeTruthy();
+    });
+
+    it('names the owner of a filter from the URL', async () => {
+      const grace = api.addAccount('grace@example.com', 'correct horse', 'Grace Hopper');
+      api.addArtifact(
+        artifact('Compiler notes', 0, { id: grace.id, displayName: grace.displayName }, 'public'),
+      );
+      renderApp(`/?scope=public&ownerId=${grace.id}`);
+      expect(
+        await screen.findByRole('button', { name: 'Remove filter: By Grace Hopper' }),
+      ).toBeTruthy();
+    });
+
+    it('sorts by publish date or last update, recently updated first by default', async () => {
+      const user = userEvent.setup();
+      const app = renderApp('/');
+      await screen.findByText('3 artifacts');
+      expect(shown()).toEqual(['Pricing page', 'Sales deck', 'Team photo']);
+
+      const sortBy = async (value: string) =>
+        user.selectOptions(screen.getByRole('combobox', { name: 'Sort by' }), value);
+      await sortBy('updated_asc');
+      expect(app.location()).toBe('/?sort=updated_asc');
+      await waitFor(() => expect(shown()).toEqual(['Team photo', 'Sales deck', 'Pricing page']));
+
+      await sortBy('newest');
+      expect(app.location()).toBe('/?sort=newest');
+      await waitFor(() => expect(shown()).toEqual(['Pricing page', 'Sales deck', 'Team photo']));
+
+      await sortBy('oldest');
+      expect(app.location()).toBe('/?sort=oldest');
+      await waitFor(() => expect(shown()).toEqual(['Team photo', 'Sales deck', 'Pricing page']));
+
+      await sortBy('');
+      expect(app.location()).toBe('/');
+      await waitFor(() => expect(shown()).toEqual(['Pricing page', 'Sales deck', 'Team photo']));
     });
 
     it('shows that it is searching until the results arrive', async () => {
@@ -227,27 +368,91 @@ describe('gallery', () => {
       expect(shown()).toEqual(['Sales deck']);
     });
 
-    it('filters by type and tag, starting again from the first page', async () => {
+    const tagOptions = () =>
+      [...document.querySelectorAll('datalist option')].map((o) => o.getAttribute('value'));
+
+    it('filters by type and tags, starting again from the first page', async () => {
       const user = userEvent.setup();
       const app = renderApp('/?page=2');
-      const tag = await screen.findByRole('combobox', { name: 'Tag' });
-      // The most used tags first.
-      await waitFor(() =>
-        expect([...tag.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
-          'All tags',
-          'q3',
-          'marketing',
-          'sales',
-          'team',
-        ]),
-      );
+      const tags = await screen.findByRole('combobox', { name: 'Filter by tags' });
+      // A few of the scope's tags, the most used first.
+      await waitFor(() => expect(tagOptions()).toEqual(['q3', 'marketing', 'sales', 'team']));
 
-      await user.selectOptions(tag, 'q3');
-      expect(app.location()).toBe('/?tag=q3');
+      // Choosing a suggestion fills in the tag.
+      fireEvent.change(tags, { target: { value: 'q3' } });
+      await waitFor(() => expect(app.location()).toBe('/?tag=q3'));
       expect(await screen.findByText('2 artifacts')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Remove tag q3' })).toBeTruthy();
+      // A picked tag isn't suggested again, and the box is empty for the next one.
+      await waitFor(() => expect(tagOptions()).not.toContain('q3'));
+      expect((tags as HTMLInputElement).value).toBe('');
 
       await user.selectOptions(screen.getByRole('combobox', { name: 'Type' }), 'PDF');
       expect(app.location()).toBe('/?type=pdf&tag=q3');
+      await waitFor(() => expect(shown()).toEqual(['Sales deck']));
+    });
+
+    it('does not ask for the suggestions again after a tag is picked', async () => {
+      const user = userEvent.setup();
+      renderApp('/');
+      const tags = await screen.findByRole('combobox', { name: 'Filter by tags' });
+      await waitFor(() => expect(tagOptions()).toContain('q3'));
+
+      await user.type(tags, 'sal');
+      await waitFor(() => expect(tagOptions()).toEqual(['sales']));
+      expect(api.calls('GET /api/artifacts/tags?scope=mine&q=sal')).toBe(1);
+
+      fireEvent.change(tags, { target: { value: 'sales' } });
+      await screen.findByRole('button', { name: 'Remove tag sales' });
+      // Past the search delay, when the cleared text would trigger a request.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(api.calls('GET /api/artifacts/tags?scope=mine')).toBe(1);
+    });
+
+    it('picks several tags, narrowing to artifacts with all of them', async () => {
+      const user = userEvent.setup();
+      const app = renderApp('/');
+      const tags = await screen.findByRole('combobox', { name: 'Filter by tags' });
+      await waitFor(() => expect(tagOptions()).toContain('q3'));
+
+      fireEvent.change(tags, { target: { value: 'q3' } });
+      await waitFor(() => expect(app.location()).toBe('/?tag=q3'));
+      await waitFor(() => expect(tagOptions()).toContain('sales'));
+      fireEvent.change(tags, { target: { value: 'sales' } });
+      await waitFor(() => expect(app.location()).toBe('/?tag=q3&tag=sales'));
+      await waitFor(() => expect(shown()).toEqual(['Sales deck']));
+
+      await user.click(screen.getByRole('button', { name: 'Remove tag q3' }));
+      expect(app.location()).toBe('/?tag=sales');
+    });
+
+    it('searches the tags on the server as you type, never listing them all', async () => {
+      for (let i = 1; i <= 12; i++)
+        api.addArtifact(variant(artifact(`T${i}`, 10 + i), 'text/html', [`topic-${i}`]));
+      const user = userEvent.setup();
+      renderApp('/');
+      const tags = await screen.findByRole('combobox', { name: 'Filter by tags' });
+      await waitFor(() => expect(tagOptions()).toHaveLength(10));
+
+      // "topic-1" is a whole tag but the start of others: typing doesn't pick it.
+      await user.type(tags, 'topic-12');
+      await waitFor(() => expect(tagOptions()).toEqual(['topic-12']));
+      expect(api.calls('GET /api/artifacts/tags?scope=mine&q=topic-12')).toBe(1);
+      expect(screen.queryByRole('button', { name: /^Remove tag/ })).toBeNull();
+
+      await user.keyboard('{Enter}');
+      expect(await screen.findByRole('button', { name: 'Remove tag topic-12' })).toBeTruthy();
+      expect((tags as HTMLInputElement).value).toBe('');
+
+      // Backspace in the empty field removes the last picked tag.
+      await user.keyboard('{Backspace}');
+      expect(screen.queryByRole('button', { name: /^Remove tag/ })).toBeNull();
+    });
+
+    it('reads several tags from the URL', async () => {
+      renderApp('/?tag=q3&tag=sales');
+      expect(await screen.findByRole('button', { name: 'Remove tag q3' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Remove tag sales' })).toBeTruthy();
       await waitFor(() => expect(shown()).toEqual(['Sales deck']));
     });
 
@@ -294,6 +499,7 @@ describe('gallery', () => {
       await waitFor(() => expect(shown()).toEqual(['Sales deck']));
       expect(screen.getByRole('button', { name: /^Remove filter: Updated since / })).toBeTruthy();
 
+      // The owner an AI search found by name has no id: it shows as a removable chip.
       await user.click(screen.getByRole('button', { name: 'Remove filter: By ada' }));
       expect(app.location()).toBe(`/?q=deck&type=pdf&updatedFrom=${since}`);
     });
@@ -336,16 +542,18 @@ describe('gallery', () => {
       expect(api.interpretRequests).toEqual([]);
     });
 
-    it('keeps filters when paging, and drops them when switching tabs', async () => {
+    it('keeps filters when paging, and keeps all but the tag when switching scope', async () => {
       for (let i = 1; i <= 25; i++) api.addArtifact(artifact(`Extra ${i}`, 10 + i));
-      renderApp('/?tag=alpha');
+      const app = renderApp('/?tag=alpha&type=html&sort=updated_asc');
       expect(await screen.findByText('Page 1 of 2')).toBeTruthy();
       expect(screen.getByRole('link', { name: 'Next page' }).getAttribute('href')).toBe(
-        '/?tag=alpha&page=2',
+        '/?type=html&tag=alpha&sort=updated_asc&page=2',
       );
-      expect(screen.getByRole('link', { name: 'Company' }).getAttribute('href')).toBe(
-        '/?scope=public',
-      );
+
+      await userEvent
+        .setup()
+        .selectOptions(screen.getByRole('combobox', { name: 'Show' }), 'public');
+      expect(app.location()).toBe('/?scope=public&type=html&sort=updated_asc');
     });
   });
 });

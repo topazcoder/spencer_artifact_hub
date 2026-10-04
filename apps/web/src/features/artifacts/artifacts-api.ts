@@ -34,7 +34,9 @@ export async function fetchArtifacts(
 ): Promise<ArtifactListResponse> {
   const query = new URLSearchParams({ scope, page: String(page), pageSize: String(pageSize) });
   for (const [key, value] of Object.entries(filters)) {
-    if (value) query.set(key, value);
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (item) query.append(key, item);
+    }
   }
   return apiRequest(`/artifacts?${query}`, { schema: artifactListResponseSchema, signal });
 }
@@ -51,15 +53,17 @@ export async function interpretSearch(
   return apiRequest(`/search/interpret?${query}`, { schema: searchInterpretationSchema });
 }
 
-export const artifactTagsQueryKey = (scope: ArtifactListScope) =>
-  [...artifactListsQueryKey, 'tags', scope] as const;
+export const artifactTagsQueryKey = (scope: ArtifactListScope, search: string) =>
+  [...artifactListsQueryKey, 'tags', scope, search] as const;
 
-/** The tags used in a gallery scope, the most used first. */
+/** A few of the tags used in a gallery scope that contain `search`, the most used first. */
 export async function fetchArtifactTags(
   scope: ArtifactListScope,
+  search: string,
   signal?: AbortSignal,
 ): Promise<ArtifactTagListResponse['items']> {
   const query = new URLSearchParams({ scope });
+  if (search) query.set('q', search);
   return (
     await apiRequest(`/artifacts/tags?${query}`, { schema: artifactTagListResponseSchema, signal })
   ).items;

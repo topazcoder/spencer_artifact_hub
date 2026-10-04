@@ -1,5 +1,6 @@
 import type { Readable } from 'node:stream';
 import type {
+  ArtifactListSort,
   ArtifactMimeType,
   ArtifactPermissions,
   ArtifactVisibility,
@@ -41,6 +42,8 @@ export interface ArtifactContent {
 export interface ArtifactFilters {
   /** Only artifacts owned by this user. */
   ownerId?: string;
+  /** Only artifacts owned by this user, picked by the caller; on top of the scope's own filters. */
+  ownedBy?: string;
   /** Only artifacts with this visibility. */
   visibility?: ArtifactVisibility;
   /** Only other users' artifacts shared with this user by name. */
@@ -49,8 +52,8 @@ export interface ArtifactFilters {
   search?: string;
   /** Only artifacts whose current version has one of these types. */
   mimeTypes?: readonly ArtifactMimeType[];
-  /** Only artifacts with this (normalized) tag. */
-  tag?: string;
+  /** Only artifacts with all of these (normalized) tags. */
+  tags?: readonly string[];
   /** Only artifacts whose owner's display name contains this (any case), or whose owner has this email. */
   owner?: string;
   /** Only artifacts last updated on or after this day (UTC, `YYYY-MM-DD`). */
@@ -59,7 +62,15 @@ export interface ArtifactFilters {
   updatedTo?: string;
 }
 
+/** How one list order sorts: by a date column of the artifact, in a direction. */
+export interface ArtifactSortOrder {
+  column: `artifact.${keyof Pick<Artifact, 'createdAt' | 'updatedAt'>}`;
+  direction: 'ASC' | 'DESC';
+}
+
 export interface ArtifactListOptions extends ArtifactFilters {
+  /** Without one, the most relevant first when searching, else `updated_desc`. */
+  sort?: ArtifactListSort;
   /** 1-based. */
   page: number;
   pageSize: number;
@@ -87,6 +98,14 @@ export interface ResolvedArtifact {
 export interface TagCount {
   tag: string;
   count: number;
+}
+
+/** Which tags `listTags` returns. */
+export interface TagListOptions {
+  /** Only tags containing this (any case). */
+  search?: string;
+  /** At most this many; the AI search's tag list by default. */
+  limit?: number;
 }
 
 export interface ArtifactPage {

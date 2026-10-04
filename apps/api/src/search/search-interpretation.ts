@@ -73,7 +73,7 @@ export function toSearchFilters(answer: SearchAnswer, context: SearchContext): S
     scope: answer.scope ?? context.scope,
     q: keywords || undefined,
     type: answer.type ?? undefined,
-    tag: knownTag,
+    tag: knownTag ? [knownTag] : undefined,
     owner: owner || undefined,
     updatedFrom,
     updatedTo,

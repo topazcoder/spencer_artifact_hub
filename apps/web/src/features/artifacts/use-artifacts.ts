@@ -9,6 +9,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { isApiError } from '@/lib/api/api-error.ts';
 import { submissionKey } from '@/lib/api/submission-key.ts';
 import { retryTransient } from '@/lib/query-client.ts';
+import { useDebouncedValue } from '@/lib/use-debounced-value.ts';
 import {
   artifactListQueryKey,
   artifactListsQueryKey,
@@ -53,11 +54,19 @@ export function useInterpretSearch() {
   });
 }
 
-/** Invalidated with the lists, since publishing or editing changes them. */
-export function useArtifactTags(scope: ArtifactListScope) {
+/**
+ * A few tags of a gallery scope that contain `search` (typed text, searched once typing pauses),
+ * the most used first. Invalidated with the lists, since publishing or editing changes them.
+ */
+export function useArtifactTags(scope: ArtifactListScope, search: string) {
+  const debounced = useDebouncedValue(search.trim(), 250);
   return useQuery({
-    queryKey: artifactTagsQueryKey(scope),
-    queryFn: ({ signal }) => fetchArtifactTags(scope, signal),
+    queryKey: artifactTagsQueryKey(scope, debounced),
+    queryFn: ({ signal }) => fetchArtifactTags(scope, debounced, signal),
+    placeholderData: keepPreviousData,
+    // Searches already made stay fresh: clearing the text after picking a tag goes back to the
+    // first one, which isn't asked for again. Publishing or editing invalidates them.
+    staleTime: 60_000,
   });
 }
 

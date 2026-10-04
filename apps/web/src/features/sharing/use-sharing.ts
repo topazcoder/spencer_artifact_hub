@@ -12,6 +12,7 @@ import { useDebouncedValue } from '@/lib/use-debounced-value.ts';
 import {
   accessQueryKey,
   fetchAccess,
+  fetchUser,
   removePerson,
   searchUsers,
   fetchSharedArtifact,
@@ -22,6 +23,7 @@ import {
   sharePeople,
   turnOffShareLink,
   updatePerson,
+  userQueryKey,
   userSearchQueryKey,
 } from './sharing-api.ts';
 
@@ -101,5 +103,16 @@ export function useUserSearch(query: string) {
     enabled: debounced.length >= USER_SEARCH_MIN_LENGTH,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
+  });
+}
+
+/** A user by id; disabled without one. A user's name doesn't change often. */
+export function useUser(id: string | undefined) {
+  return useQuery({
+    queryKey: userQueryKey(id ?? ''),
+    queryFn: ({ signal }) => fetchUser(id ?? '', signal),
+    enabled: id !== undefined,
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }

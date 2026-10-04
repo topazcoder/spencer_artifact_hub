@@ -1,4 +1,4 @@
-import type { ArtifactListScope, ArtifactTypeFilter } from '@artifact-hub/shared';
+import type { ArtifactListScope, ArtifactListSort, ArtifactTypeFilter } from '@artifact-hub/shared';
 import type { z } from 'zod';
 import type { metadataFormSchema } from './metadata-form-schema.ts';
 
@@ -8,13 +8,18 @@ export interface GalleryFilters {
   /** Words to search for. */
   q?: string;
   type?: ArtifactTypeFilter;
-  tag?: string;
-  /** Part of the owner's name, or their email. */
+  /** Artifacts with all of these tags. */
+  tag?: string[];
+  /** Part of the owner's name, or their email (from AI search). */
   owner?: string;
+  /** The owner's user id, as picked in the gallery. */
+  ownerId?: string;
   /** Last updated on or after this day (`YYYY-MM-DD`, UTC). */
   updatedFrom?: string;
   /** Last updated on or before this day (`YYYY-MM-DD`, UTC). */
   updatedTo?: string;
+  /** By last update; without one, the most relevant first when searching, else newest. */
+  sort?: ArtifactListSort;
 }
 
 export interface ArtifactListParams extends GalleryFilters {

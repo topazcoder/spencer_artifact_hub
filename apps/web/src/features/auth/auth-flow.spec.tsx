@@ -55,7 +55,9 @@ describe('auth flow', () => {
       api.signIn(api.addAccount(EMAIL, PASSWORD));
       renderApp('/');
       expect(await screen.findByRole('heading', { name: 'My artifacts' })).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Account menu' }).textContent).toContain('AL');
+      const userInfo = screen.getByRole('group', { name: 'Signed in user' });
+      expect(userInfo.textContent).toContain('AL');
+      expect(userInfo.textContent).toContain(EMAIL);
     });
 
     it('show unknown paths as not found, inside the app shell', async () => {
@@ -109,7 +111,7 @@ describe('auth flow', () => {
       renderApp('/signup');
       await fillSignup('Grace Hopper', ' Grace@Example.com ', PASSWORD);
       expect(await screen.findByRole('heading', { name: 'My artifacts' })).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Account menu' }).textContent).toContain('GH');
+      expect(screen.getByRole('group', { name: 'Signed in user' }).textContent).toContain('GH');
       // The shared schema normalized the email before it was sent.
       const [, init] = api.fetchMock.mock.calls.find(([url]) => url === '/api/auth/signup')!;
       expect(JSON.parse(String(init?.body)).email).toBe('grace@example.com');
@@ -131,12 +133,11 @@ describe('auth flow', () => {
   });
 
   describe('session end', () => {
-    it('logs out from the account menu', async () => {
+    it('logs out from the sidebar', async () => {
       api.signIn(api.addAccount(EMAIL, PASSWORD));
       const app = renderApp('/');
       const user = userEvent.setup();
-      await user.click(await screen.findByRole('button', { name: 'Account menu' }));
-      await user.click(await screen.findByRole('menuitem', { name: 'Log out' }));
+      await user.click(await screen.findByRole('button', { name: 'Log out' }));
       await screen.findByRole('heading', { name: 'Log in' });
       expect(app.location()).toBe('/login');
       expect(api.calls('POST /api/auth/logout')).toBe(1);

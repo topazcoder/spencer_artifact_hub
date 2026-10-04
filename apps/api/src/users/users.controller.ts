@@ -1,9 +1,13 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import {
+  ErrorCode,
+  type UserResponse,
   type UserSearchQuery,
   type UserSearchResponse,
   userSearchQuerySchema,
 } from '@artifact-hub/shared';
+import { z } from 'zod';
+import { AppError } from '../common/errors/app-error.js';
 import { CurrentActor } from '../auth/auth.decorators.js';
 import type { Actor } from '../auth/auth.types.js';
 import { USER_SEARCH_THROTTLER, UseThrottlers } from '../common/rate-limit/rate-limit.module.js';
@@ -29,5 +33,14 @@ export class UsersController {
         email: user.email,
       })),
     };
+  }
+
+  /** One user, to show who an id in a gallery filter stands for. Declared after `search`. */
+  @Get(':id')
+  @UseThrottlers(USER_SEARCH_THROTTLER)
+  async get(@Param('id') id: string): Promise<UserResponse> {
+    const user = z.guid().safeParse(id).success ? await this.users.findById(id) : null;
+    if (!user) throw new AppError(ErrorCode.NOT_FOUND, 'User not found.');
+    return { user: { id: user.id, displayName: user.displayName, email: user.email } };
   }
 }

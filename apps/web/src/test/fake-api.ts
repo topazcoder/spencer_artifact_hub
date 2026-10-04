@@ -1,6 +1,7 @@
 import {
   type ApiToken,
   API_TOKENS_MAX,
+  ARTIFACT_TAG_SUGGESTION_MAX,
   ARTIFACT_TYPE_FILTERS,
   type Artifact,
   type ArtifactListScope,
@@ -44,6 +45,7 @@ const COMPANY_ROUTE = /^PUT \/api\/artifacts\/([^/?]+)\/access\/company$/;
 const PEOPLE_ROUTE = /^POST \/api\/artifacts\/([^/?]+)\/access\/people$/;
 const PERSON_ROUTE = /^(PATCH|DELETE) \/api\/artifacts\/([^/?]+)\/access\/people\/([^/?]+)$/;
 const USER_SEARCH_ROUTE = /^GET \/api\/users\/search\?(.*)$/;
+const USER_ROUTE = /^GET \/api\/users\/([^/?]+)$/;
 const LINK_ROUTE = /^(PUT|DELETE) \/api\/artifacts\/([^/?]+)\/access\/link$/;
 const LINK_RESET_ROUTE = /^POST \/api\/artifacts\/([^/?]+)\/access\/link\/reset$/;
 const SHARED_ROUTE = /^GET \/api\/s\/([^/?]+)(\/content)?(\?.*)?$/;
@@ -340,8 +342,9 @@ export function installFakeApi() {
     const pageSize = Number(query.get('pageSize') ?? 24);
     const q = query.get('q');
     const type = query.get('type') as keyof typeof ARTIFACT_TYPE_FILTERS | null;
-    const tag = query.get('tag');
+    const tags = query.getAll('tag');
     const owner = query.get('owner')?.toLowerCase();
+    const ownerId = query.get('ownerId');
     const from = query.get('updatedFrom');
     const to = query.get('updatedTo');
     const matching = inScope(query.get('scope') ?? 'mine')
@@ -353,11 +356,17 @@ export function installFakeApi() {
             artifact.currentVersion?.mimeType ?? '',
           ),
       )
-      .filter((artifact) => !tag || artifact.tags.includes(tag))
+      .filter((artifact) => tags.every((tag) => artifact.tags.includes(tag)))
+      .filter((artifact) => !ownerId || artifact.owner.id === ownerId)
       .filter((artifact) => !owner || artifact.owner.displayName.toLowerCase().includes(owner))
       .filter((artifact) => !from || artifact.updatedAt.slice(0, 10) >= from)
       .filter((artifact) => !to || artifact.updatedAt.slice(0, 10) <= to)
-      .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      .toSorted((a, b) => {
+        const sort = query.get('sort') ?? 'updated_desc';
+        const field = sort === 'newest' || sort === 'oldest' ? 'createdAt' : 'updatedAt';
+        const ascending = sort === 'oldest' || sort === 'updated_asc';
+        return ascending ? a[field].localeCompare(b[field]) : b[field].localeCompare(a[field]);
+      });
     const items = matching.slice((page - 1) * pageSize, page * pageSize).map(seen);
     return json(200, { items, page, pageSize, total: matching.length });
   };
@@ -369,7 +378,9 @@ export function installFakeApi() {
     }
     const items = [...counts]
       .map(([tag, count]) => ({ tag, count }))
-      .toSorted((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+      .filter(({ tag }) => tag.includes((query.get('q') ?? '').toLowerCase()))
+      .toSorted((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+      .slice(0, ARTIFACT_TAG_SUGGESTION_MAX);
     return json(200, { items });
   };
 
@@ -520,6 +531,16 @@ export function installFakeApi() {
     if (searchMatch) {
       if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
       return searchUsers(new URLSearchParams(searchMatch[1]));
+    }
+    const userMatch = USER_ROUTE.exec(route);
+    if (userMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      const found = [...accounts.values()]
+        .map(({ user }) => user)
+        .find((user) => user.id === decodeURIComponent(userMatch[1] ?? ''));
+      if (!found) return error(404, ErrorCode.NOT_FOUND, 'User not found.');
+      const { id, displayName, email } = found;
+      return json(200, { user: { id, displayName, email } });
     }
     const accessMatch =
       ACCESS_ROUTE.exec(route) ?? COMPANY_ROUTE.exec(route) ?? PEOPLE_ROUTE.exec(route);

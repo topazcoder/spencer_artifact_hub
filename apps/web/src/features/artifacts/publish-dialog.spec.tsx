@@ -137,7 +137,7 @@ describe('publish dialog', () => {
     await user.click(screen.getByRole('button', { name: 'Publish' }));
     await screen.findByRole('heading', { name: 'pricing-page', level: 1 });
 
-    await user.click(screen.getByRole('link', { name: 'Artifact Hub' }));
+    await user.click(screen.getAllByRole('link', { name: 'Artifact Hub' })[0]!);
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: 'pricing-page', level: 2 })).toBeTruthy(),
     );

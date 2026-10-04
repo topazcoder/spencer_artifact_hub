@@ -17,10 +17,10 @@ import { useArtifactList } from '@/features/artifacts/use-artifacts.ts';
 import { InlineError, InlineLoading } from '@/components/inline-status.tsx';
 import { cn } from '@/lib/utils';
 
-const SCOPES: Record<ArtifactListScope, { tab: string; heading: string }> = {
-  mine: { tab: 'Mine', heading: 'My artifacts' },
-  shared: { tab: 'Shared with me', heading: 'Shared with me' },
-  public: { tab: 'Company', heading: 'Shared with the company' },
+const HEADINGS: Record<ArtifactListScope, string> = {
+  mine: 'My artifacts',
+  shared: 'Shared with me',
+  public: 'Shared with the company',
 };
 
 /** The gallery's URL state; anything invalid falls back to its default. */
@@ -28,6 +28,11 @@ function useGalleryParams(): Filters & { page: number } {
   const [searchParams] = useSearchParams();
   const parse = <T,>(schema: z.ZodType<T>, key: string): T | undefined => {
     const parsed = schema.safeParse(searchParams.get(key) ?? undefined);
+    return parsed.success ? parsed.data : undefined;
+  };
+  // A key that may repeat (`?tag=a&tag=b`).
+  const parseAll = <T,>(schema: z.ZodType<T>, key: string): T | undefined => {
+    const parsed = schema.safeParse(searchParams.getAll(key));
     return parsed.success ? parsed.data : undefined;
   };
   const { shape } = artifactListQuerySchema;
@@ -38,23 +43,36 @@ function useGalleryParams(): Filters & { page: number } {
     scope,
     q: parse(shape.q, 'q'),
     type: parse(shape.type, 'type'),
-    tag: parse(shape.tag, 'tag'),
+    tag: parseAll(shape.tag, 'tag'),
     owner: parse(shape.owner, 'owner'),
+    ownerId: parse(shape.ownerId, 'ownerId'),
     updatedFrom: parse(shape.updatedFrom, 'updatedFrom'),
     updatedTo: parse(shape.updatedTo, 'updatedTo'),
+    sort: parse(shape.sort, 'sort'),
     page: Number.isInteger(page) && page >= 1 ? page : 1,
   };
 }
 
 /** The gallery URL for these filters and page, leaving defaults out. */
 function galleryHref(
-  { scope, q, type, tag, owner, updatedFrom, updatedTo }: Filters,
+  { scope, q, type, tag, owner, ownerId, updatedFrom, updatedTo, sort }: Filters,
   page = 1,
 ): string {
   const query = new URLSearchParams();
   if (scope !== 'mine') query.set('scope', scope);
-  for (const [key, value] of Object.entries({ q, type, tag, owner, updatedFrom, updatedTo })) {
-    if (value) query.set(key, value);
+  for (const [key, value] of Object.entries({
+    q,
+    type,
+    tag,
+    owner,
+    ownerId,
+    updatedFrom,
+    updatedTo,
+    sort,
+  })) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (item) query.append(key, item);
+    }
   }
   if (page > 1) query.set('page', String(page));
   const search = query.toString();
@@ -81,26 +99,8 @@ export function GalleryPage() {
 
   return (
     <section className="grid gap-6">
-      <nav aria-label="Gallery" className="flex gap-1 border-b">
-        {ARTIFACT_LIST_SCOPES.map((s) => (
-          <Link
-            key={s}
-            to={galleryHref({ scope: s })}
-            aria-current={s === scope ? 'page' : undefined}
-            className={cn(
-              '-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none',
-              s === scope
-                ? 'border-primary text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {SCOPES[s].tab}
-          </Link>
-        ))}
-      </nav>
-
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">{SCOPES[scope].heading}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{HEADINGS[scope]}</h1>
         {isPlaceholderData ? (
           <p role="status" className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
@@ -113,63 +113,61 @@ export function GalleryPage() {
         ) : null}
       </div>
 
-      <GalleryFilters
-        key={scope}
-        filters={filters}
-        loading={isPlaceholderData}
-        onChange={applyFilters}
-      />
+      <GalleryFilters filters={filters} loading={isPlaceholderData} onChange={applyFilters} />
 
-      {error ? (
-        <div className="h-64">
-          <InlineError error={error} onRetry={() => void refetch()} />
-        </div>
-      ) : !data ? (
-        <div className="h-64">
-          <InlineLoading />
-        </div>
-      ) : data.total === 0 && filtered ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center">
-          <h2 className="text-lg font-medium">No artifacts match</h2>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            Try other words, or fewer filters.
+      {/* A minimum height, so the page doesn't shrink when nothing is found. */}
+      <div className="grid min-h-[28rem] content-start gap-6">
+        {error ? (
+          <div className="h-64">
+            <InlineError error={error} onRetry={() => void refetch()} />
+          </div>
+        ) : !data ? (
+          <div className="h-64">
+            <InlineLoading />
+          </div>
+        ) : data.total === 0 && filtered ? (
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center">
+            <h2 className="text-lg font-medium">No artifacts match</h2>
+            <p className="max-w-sm text-sm text-muted-foreground">
+              Try other words, or fewer filters.
+            </p>
+            <Button variant="outline" onClick={() => applyFilters({ scope, sort: filters.sort })}>
+              Clear filters
+            </Button>
+          </div>
+        ) : data.total === 0 ? (
+          <EmptyGallery scope={scope} />
+        ) : data.items.length === 0 ? (
+          <p className="py-16 text-center text-muted-foreground">
+            There's nothing on this page.{' '}
+            <Link to={galleryHref(filters)} className="underline">
+              Go to the first page
+            </Link>
           </p>
-          <Button variant="outline" onClick={() => applyFilters({ scope })}>
-            Clear filters
-          </Button>
-        </div>
-      ) : data.total === 0 ? (
-        <EmptyGallery scope={scope} />
-      ) : data.items.length === 0 ? (
-        <p className="py-16 text-center text-muted-foreground">
-          There's nothing on this page.{' '}
-          <Link to={galleryHref(filters)} className="underline">
-            Go to the first page
-          </Link>
-        </p>
-      ) : (
-        <>
-          <ul
-            className={cn(
-              'grid gap-4 transition-opacity sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4',
-              // Earlier results stay while new ones load, faded.
-              isPlaceholderData && 'opacity-50',
-            )}
-            aria-busy={isPlaceholderData}
-          >
-            {data.items.map((artifact) => (
-              <li key={artifact.id} className="grid">
-                <ArtifactCard artifact={artifact} />
-              </li>
-            ))}
-          </ul>
-          <Pagination
-            page={page}
-            pageCount={Math.ceil(data.total / pageSize)}
-            hrefFor={(n) => galleryHref(filters, n)}
-          />
-        </>
-      )}
+        ) : (
+          <>
+            <ul
+              className={cn(
+                'grid gap-4 transition-opacity sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4',
+                // Earlier results stay while new ones load, faded.
+                isPlaceholderData && 'opacity-50',
+              )}
+              aria-busy={isPlaceholderData}
+            >
+              {data.items.map((artifact) => (
+                <li key={artifact.id} className="grid">
+                  <ArtifactCard artifact={artifact} />
+                </li>
+              ))}
+            </ul>
+            <Pagination
+              page={page}
+              pageCount={Math.ceil(data.total / pageSize)}
+              hrefFor={(n) => galleryHref(filters, n)}
+            />
+          </>
+        )}
+      </div>
     </section>
   );
 }

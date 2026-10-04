@@ -18,6 +18,7 @@ import {
   type ArtifactListScope,
   type ArtifactTagListQuery,
   type ArtifactTagListResponse,
+  ARTIFACT_TAG_SUGGESTION_MAX,
   ARTIFACT_TYPE_FILTERS,
   artifactTagListQuerySchema,
   type ArtifactResponse,
@@ -109,28 +110,39 @@ export class ArtifactsController {
     @CurrentActor() actor: Actor,
     @Query(new ZodValidationPipe(artifactListQuerySchema)) query: ArtifactListQuery,
   ): Promise<ArtifactListResponse> {
-    const { scope, q, type, tag, owner, updatedFrom, updatedTo, page, pageSize } = query;
+    const { scope, q, type, tag, owner, ownerId, updatedFrom, updatedTo, sort, page, pageSize } =
+      query;
     const { items, total } = await this.artifacts.list(actor, {
       ...SCOPE_FILTERS[scope](actor),
       search: q,
       mimeTypes: type ? ARTIFACT_TYPE_FILTERS[type] : undefined,
-      tag,
+      tags: tag,
       owner,
+      ownedBy: ownerId,
       updatedFrom,
       updatedTo,
+      sort,
       page,
       pageSize,
     });
     return { items: items.map(toArtifactDto), page, pageSize, total };
   }
 
-  /** The tags used in a gallery scope, for its tag filter. Declared before `:id`. */
+  /**
+   * A few of the tags used in a gallery scope, the most used first and only those containing
+   * `q`, for its tag filter. Declared before `:id`.
+   */
   @Get('tags')
   async listTags(
     @CurrentActor() actor: Actor,
-    @Query(new ZodValidationPipe(artifactTagListQuerySchema)) { scope }: ArtifactTagListQuery,
+    @Query(new ZodValidationPipe(artifactTagListQuerySchema)) { scope, q }: ArtifactTagListQuery,
   ): Promise<ArtifactTagListResponse> {
-    return { items: await this.artifacts.listTags(actor, SCOPE_FILTERS[scope](actor)) };
+    return {
+      items: await this.artifacts.listTags(actor, SCOPE_FILTERS[scope](actor), {
+        search: q,
+        limit: ARTIFACT_TAG_SUGGESTION_MAX,
+      }),
+    };
   }
 
   /** A version's bytes with the sandbox headers; `?download=1` saves it as a file. */

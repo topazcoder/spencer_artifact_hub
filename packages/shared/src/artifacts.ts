@@ -204,8 +204,25 @@ export const ARTIFACT_TYPE_FILTERS = {
 
 export type ArtifactTypeFilter = keyof typeof ARTIFACT_TYPE_FILTERS;
 
+/**
+ * List orders: by when an artifact was published (`newest`, `oldest`) or last updated
+ * (`updated_desc`, `updated_asc`). Without one, the most relevant first when searching, else
+ * `updated_desc`.
+ */
+export const ARTIFACT_LIST_SORTS = ['newest', 'oldest', 'updated_desc', 'updated_asc'] as const;
+export type ArtifactListSort = (typeof ARTIFACT_LIST_SORTS)[number];
+
 export const ARTIFACT_SEARCH_MAX_LENGTH = 200;
 export const ARTIFACT_OWNER_FILTER_MAX_LENGTH = 100;
+
+/** One value or several (a repeated query key) as a list; blank values count as absent. */
+const blankAsList = (value: unknown) => {
+  if (value === undefined) return undefined;
+  const list = (Array.isArray(value) ? value : [value]).filter(
+    (item) => !(typeof item === 'string' && item.trim() === ''),
+  );
+  return list.length > 0 ? list : undefined;
+};
 
 /** Blank values count as absent, so a cleared filter in a URL (`?q=`) is no filter. */
 export const blankAsUndefined = (value: unknown) =>
@@ -230,16 +247,27 @@ export const artifactListQuerySchema = z.object({
     blankAsUndefined,
     z.enum(Object.keys(ARTIFACT_TYPE_FILTERS) as [ArtifactTypeFilter]).optional(),
   ),
-  tag: z.preprocess(blankAsUndefined, artifactTagSchema.optional()),
+  /** Only artifacts with all of these tags: `?tag=a&tag=b`. */
+  tag: z.preprocess(
+    blankAsList,
+    z
+      .array(artifactTagSchema)
+      .max(ARTIFACT_TAGS_MAX, `Use at most ${ARTIFACT_TAGS_MAX} tags.`)
+      .transform((tags) => [...new Set(tags)])
+      .optional(),
+  ),
   /** Only artifacts whose owner's name contains this, or whose owner has this email. */
   owner: z.preprocess(
     blankAsUndefined,
     z.string().trim().max(ARTIFACT_OWNER_FILTER_MAX_LENGTH).optional(),
   ),
+  /** Only artifacts owned by this user, as picked from `GET /api/users/search`. */
+  ownerId: z.preprocess(blankAsUndefined, z.guid().optional()),
   /** Only artifacts last updated on or after this day (UTC, `YYYY-MM-DD`). */
   updatedFrom: z.preprocess(blankAsUndefined, z.iso.date().optional()),
   /** Only artifacts last updated on or before this day (UTC, `YYYY-MM-DD`). */
   updatedTo: z.preprocess(blankAsUndefined, z.iso.date().optional()),
+  sort: z.preprocess(blankAsUndefined, z.enum(ARTIFACT_LIST_SORTS).optional()),
   /** 1-based. */
   page: z.coerce.number().int().min(1).max(ARTIFACT_LIST_MAX_PAGE).default(1),
   pageSize: z.coerce
@@ -253,20 +281,29 @@ export const artifactListQuerySchema = z.object({
 export type ArtifactListQuery = z.output<typeof artifactListQuerySchema>;
 
 /** Query of `GET /api/artifacts/tags`: the tags used in a gallery scope. */
-export const artifactTagListQuerySchema = artifactListQuerySchema.pick({ scope: true });
+export const artifactTagListQuerySchema = artifactListQuerySchema.pick({ scope: true }).extend({
+  /** Only tags containing this (any case). */
+  q: z.preprocess(blankAsUndefined, z.string().trim().max(ARTIFACT_TAG_MAX_LENGTH).optional()),
+});
 
 export type ArtifactTagListQuery = z.output<typeof artifactTagListQuerySchema>;
 
-/** The most used tags first, at most `ARTIFACT_TAG_LIST_MAX`. */
+/** The most used tags first, at most `ARTIFACT_TAG_SUGGESTION_MAX`. */
 export const artifactTagListResponseSchema = z.object({
   items: z.array(z.object({ tag: z.string(), count: z.number().int().positive() })),
 });
 
 export type ArtifactTagListResponse = z.infer<typeof artifactTagListResponseSchema>;
 
+/** What the tag filter suggests at a time: it searches for the rest. */
+export const ARTIFACT_TAG_SUGGESTION_MAX = 10;
+/** The most tags listed for the AI search to choose from. */
 export const ARTIFACT_TAG_LIST_MAX = 50;
 
-/** Newest first (by last update), or most relevant first when searching. A page past the end has no items. */
+/**
+ * In the requested `sort`; without one, the most relevant first when searching, otherwise the
+ * most recently updated. A page past the end has no items.
+ */
 export const artifactListResponseSchema = z.object({
   items: z.array(artifactSchema),
   page: z.number().int().positive(),

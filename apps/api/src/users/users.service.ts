@@ -24,7 +24,7 @@ export class UsersService {
    * picking people to share with. Prefix-only and capped, so it can't list every account.
    */
   search(actor: Actor, prefix: string, limit = USER_SEARCH_LIMIT): Promise<User[]> {
-    const pattern = `${escapeLike(prefix)}%`;
+    const pattern = `%${escapeLike(prefix)}%`;
     return this.users
       .createQueryBuilder('user')
       .where('user.id != :me', { me: actor.userId })

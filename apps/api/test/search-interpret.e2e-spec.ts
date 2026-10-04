@@ -67,7 +67,7 @@ describe('Natural-language search (e2e)', () => {
           scope: 'shared',
           q: 'pricing',
           type: 'pdf',
-          tag: 'marketing',
+          tag: ['marketing'],
           owner: 'Sara',
           updatedFrom: '2026-09-28',
           updatedTo: '2026-10-04',

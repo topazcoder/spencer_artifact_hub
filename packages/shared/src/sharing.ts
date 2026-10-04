@@ -150,3 +150,8 @@ export const userSearchResponseSchema = z.object({
 
 export type UserSearchResponse = z.infer<typeof userSearchResponseSchema>;
 export type UserSummary = UserSearchResponse['items'][number];
+
+/** Response of `GET /api/users/:id`. */
+export const userResponseSchema = z.object({ user: userSearchResponseSchema.shape.items.element });
+
+export type UserResponse = z.infer<typeof userResponseSchema>;
