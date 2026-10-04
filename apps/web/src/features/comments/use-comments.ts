@@ -5,7 +5,10 @@ import {
   commentThreadsQueryKey,
   createComment,
   deleteComment,
+  feedbackSummaryQueryKey,
   fetchCommentThreads,
+  fetchFeedbackSummary,
+  summarizeFeedback,
   updateComment,
 } from './comments-api.ts';
 import { submissionKey } from '@/lib/api/submission-key.ts';
@@ -56,4 +59,27 @@ export function useUpdateComment(artifactId: string) {
 
 export function useDeleteComment(artifactId: string) {
   return useCommentChange(artifactId, (commentId: string) => deleteComment(commentId));
+}
+
+/** The saved AI summary of one version's comments, or every version's (`versionNo` null). */
+export function useFeedbackSummary(
+  artifactId: string,
+  versionNo: number | null,
+  { enabled }: { enabled: boolean },
+) {
+  return useQuery({
+    queryKey: feedbackSummaryQueryKey(artifactId, versionNo),
+    queryFn: ({ signal }) => fetchFeedbackSummary(artifactId, versionNo, signal),
+    enabled,
+  });
+}
+
+/** Summarizes the comments now; the result replaces the saved summary in the cache. */
+export function useSummarizeFeedback(artifactId: string, versionNo: number | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => summarizeFeedback(artifactId, versionNo),
+    onSuccess: (data) =>
+      queryClient.setQueryData(feedbackSummaryQueryKey(artifactId, versionNo), data),
+  });
 }

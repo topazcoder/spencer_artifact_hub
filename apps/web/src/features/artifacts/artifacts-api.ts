@@ -10,6 +10,8 @@ import {
   artifactVersionListResponseSchema,
   type CreateArtifactRequest,
   type CreateVersionRequest,
+  type SearchInterpretation,
+  searchInterpretationSchema,
   type UpdateArtifactRequest,
 } from '@artifact-hub/shared';
 import { apiFetchContent, apiRequest } from '@/lib/api/client.ts';
@@ -27,14 +29,26 @@ export const artifactListQueryKey = (params: ArtifactListParams) =>
   [...artifactListsQueryKey, params] as const;
 
 export async function fetchArtifacts(
-  { scope, page, pageSize, q, type, tag }: ArtifactListParams,
+  { scope, page, pageSize, ...filters }: ArtifactListParams,
   signal?: AbortSignal,
 ): Promise<ArtifactListResponse> {
   const query = new URLSearchParams({ scope, page: String(page), pageSize: String(pageSize) });
-  for (const [key, value] of Object.entries({ q, type, tag })) {
+  for (const [key, value] of Object.entries(filters)) {
     if (value) query.set(key, value);
   }
   return apiRequest(`/artifacts?${query}`, { schema: artifactListResponseSchema, signal });
+}
+
+/**
+ * Gallery filters for a search typed in plain language. Without AI, or when it fails, a plain
+ * search for the text in the same scope (`interpreted: false`).
+ */
+export async function interpretSearch(
+  q: string,
+  scope: ArtifactListScope,
+): Promise<SearchInterpretation> {
+  const query = new URLSearchParams({ q, scope });
+  return apiRequest(`/search/interpret?${query}`, { schema: searchInterpretationSchema });
 }
 
 export const artifactTagsQueryKey = (scope: ArtifactListScope) =>

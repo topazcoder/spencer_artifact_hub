@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRelativeTime, formatTimeUntil } from './format.ts';
+import { formatRelativeTime, formatTimeUntil, formatUpdatedRange } from './format.ts';
 
 const NOW = new Date('2026-10-03T12:00:00Z');
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
@@ -33,5 +33,17 @@ describe('formatTimeUntil', () => {
     [later(30 * 86_400_000), 'on Nov 2, 2026'],
   ])('formats %s as %j', (date, expected) => {
     expect(formatTimeUntil(date, NOW)).toBe(expected);
+  });
+});
+
+describe('formatUpdatedRange', () => {
+  it('formats a range of days, or one end of it', () => {
+    expect(formatUpdatedRange('2026-09-28', '2026-10-04')).toMatch(
+      /^Updated Sep 28\s–\sOct 4, 2026$/,
+    );
+    expect(formatUpdatedRange('2026-10-04', '2026-10-04')).toBe('Updated Oct 4, 2026');
+    expect(formatUpdatedRange('2026-09-28')).toBe('Updated since Sep 28, 2026');
+    expect(formatUpdatedRange(undefined, '2026-10-04')).toBe('Updated until Oct 4, 2026');
+    expect(formatUpdatedRange()).toBeNull();
   });
 });

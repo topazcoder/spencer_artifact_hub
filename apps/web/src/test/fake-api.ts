@@ -3,11 +3,14 @@ import {
   API_TOKENS_MAX,
   ARTIFACT_TYPE_FILTERS,
   type Artifact,
+  type ArtifactListScope,
   type ArtifactMimeType,
   type ArtifactVersion,
   ErrorCode,
   type ArtifactAccess,
   type Comment,
+  type FeedbackSummary,
+  type SearchInterpretation,
   type SharedPerson,
   type User,
 } from '@artifact-hub/shared';
@@ -32,6 +35,7 @@ function error(status: number, code: ErrorCode, message: string): Response {
 
 const LIST_ROUTE = /^GET \/api\/artifacts\?(.*)$/;
 const TAGS_ROUTE = /^GET \/api\/artifacts\/tags\?(.*)$/;
+const INTERPRET_ROUTE = /^GET \/api\/search\/interpret\?(.*)$/;
 const ARTIFACT_ROUTE = /^(GET|PATCH|DELETE) \/api\/artifacts\/([^/?]+)$/;
 const VERSIONS_ROUTE = /^(GET|POST) \/api\/artifacts\/([^/?]+)\/versions$/;
 const CONTENT_ROUTE = /^GET \/api\/artifacts\/([^/?]+)\/versions\/(\d+)\/content$/;
@@ -45,6 +49,7 @@ const LINK_RESET_ROUTE = /^POST \/api\/artifacts\/([^/?]+)\/access\/link\/reset$
 const SHARED_ROUTE = /^GET \/api\/s\/([^/?]+)(\/content)?(\?.*)?$/;
 const COMMENTS_ROUTE = /^(GET|POST) \/api\/artifacts\/([^/?]+)\/comments(?:\?(.*))?$/;
 const COMMENT_ROUTE = /^(PATCH|DELETE) \/api\/comments\/([^/?]+)$/;
+const SUMMARY_ROUTE = /^(GET|POST) \/api\/artifacts\/([^/?]+)\/feedback-summary(?:\?(.*))?$/;
 const TOKEN_ROUTE = /^DELETE \/api\/tokens\/([^/?]+)$/;
 const UPLOAD_SESSION_ROUTE = /^(GET|POST) \/api\/upload-sessions\/([^/?]+)$/;
 
@@ -69,6 +74,11 @@ function versionOf(file: File, versionNo: number, changeNote: string | null): Ar
   };
 }
 
+/** What the server answers a natural-language search with, without AI. */
+function keywordSearch(q: string, scope: string): SearchInterpretation {
+  return { interpreted: false, filters: { scope: scope as ArtifactListScope, q } };
+}
+
 /** Like the server: every word must start a word of the title, description or a tag. */
 function matches(artifact: Artifact, q: string): boolean {
   const words = `${artifact.title} ${artifact.description} ${artifact.tags.join(' ')}`
@@ -80,6 +90,8 @@ function matches(artifact: Artifact, q: string): boolean {
 }
 
 /** A comment as the fake server stores it: without the permissions, which depend on who asks. */
+type FeedbackSummaryContent = Pick<FeedbackSummary, 'overview' | 'themes' | 'disagreements'>;
+
 interface StoredComment {
   artifactId: string;
   comment: Omit<Comment, 'permissions'>;
@@ -111,6 +123,20 @@ export function installFakeApi() {
   let listsHeld: Promise<void> | null = null;
   let nextUpdateResponse: Response | null = null;
   let maxArtifactBytes = 10 * 1024 * 1024;
+  let aiEnabled = false;
+  /** Answers natural-language searches; like the server without AI by default. */
+  let interpret = keywordSearch;
+  /** Every natural-language search asked for. */
+  const interpretRequests: { q: string; scope: string }[] = [];
+  /** Saved feedback summaries by `artifactId:versionNo|all`, with the comments they read. */
+  const summaries = new Map<string, { summary: FeedbackSummary; commentIds: string }>();
+  /** What summarizing writes; an error makes it fail with `AI_UNAVAILABLE`. */
+  let summaryContent: FeedbackSummaryContent | Error = {
+    overview: 'Reviewers like it overall.',
+    themes: [],
+    disagreements: [],
+  };
+  let summarizeCount = 0;
   let signedIn: User | null = null;
   /** The signed-in user's live API tokens, newest first. */
   let apiTokens: ApiToken[] = [];
@@ -315,6 +341,9 @@ export function installFakeApi() {
     const q = query.get('q');
     const type = query.get('type') as keyof typeof ARTIFACT_TYPE_FILTERS | null;
     const tag = query.get('tag');
+    const owner = query.get('owner')?.toLowerCase();
+    const from = query.get('updatedFrom');
+    const to = query.get('updatedTo');
     const matching = inScope(query.get('scope') ?? 'mine')
       .filter((artifact) => !q || matches(artifact, q))
       .filter(
@@ -325,6 +354,9 @@ export function installFakeApi() {
           ),
       )
       .filter((artifact) => !tag || artifact.tags.includes(tag))
+      .filter((artifact) => !owner || artifact.owner.displayName.toLowerCase().includes(owner))
+      .filter((artifact) => !from || artifact.updatedAt.slice(0, 10) >= from)
+      .filter((artifact) => !to || artifact.updatedAt.slice(0, 10) <= to)
       .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const items = matching.slice((page - 1) * pageSize, page * pageSize).map(seen);
     return json(200, { items, page, pageSize, total: matching.length });
@@ -339,6 +371,41 @@ export function installFakeApi() {
       .map(([tag, count]) => ({ tag, count }))
       .toSorted((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
     return json(200, { items });
+  };
+
+  /** Like the server: summaries are saved per version, and outdated once the comments change. */
+  const feedbackSummary = (
+    method: string,
+    artifactId: string,
+    query: URLSearchParams,
+  ): Response => {
+    const versionNo = query.get('version') ? Number(query.get('version')) : null;
+    const read = comments.filter(
+      (c) =>
+        c.artifactId === artifactId &&
+        !c.deleted &&
+        (versionNo === null || c.comment.versionNo === versionNo),
+    );
+    const key = `${artifactId}:${versionNo ?? 'all'}`;
+    const commentIds = read.map((c) => `${c.comment.id}:${c.comment.resolvedAt}`).join(',');
+    const saved = read.length > 0 ? summaries.get(key) : undefined;
+    const outdated = saved !== undefined && saved.commentIds !== commentIds;
+    if (method === 'GET' || read.length === 0 || (saved && !outdated)) {
+      return json(200, { summary: saved?.summary ?? null, outdated });
+    }
+    if (summaryContent instanceof Error) {
+      return error(503, ErrorCode.AI_UNAVAILABLE, summaryContent.message);
+    }
+    summarizeCount++;
+    const summary: FeedbackSummary = {
+      ...summaryContent,
+      versionNo,
+      commentCount: read.length,
+      partial: false,
+      generatedAt: new Date().toISOString(),
+    };
+    summaries.set(key, { summary, commentIds });
+    return json(200, { summary, outdated: false });
   };
 
   /** `comment` with what the signed-in user may do with it: authors decide, as on the server. */
@@ -422,7 +489,17 @@ export function installFakeApi() {
     const body = typeof init.body === 'string' ? JSON.parse(init.body) : undefined;
     const route = `${init.method ?? 'GET'} ${input}`;
 
-    if (route === 'GET /api/config') return json(200, { maxArtifactBytes });
+    if (route === 'GET /api/config') {
+      return json(200, { maxArtifactBytes, features: { ai: aiEnabled } });
+    }
+    const interpretMatch = INTERPRET_ROUTE.exec(route);
+    if (interpretMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      const query = new URLSearchParams(interpretMatch[1]);
+      const request = { q: query.get('q') ?? '', scope: query.get('scope') ?? 'mine' };
+      interpretRequests.push(request);
+      return json(200, interpret(request.q, request.scope));
+    }
     const tagsMatch = TAGS_ROUTE.exec(route);
     if (tagsMatch) {
       if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
@@ -461,6 +538,12 @@ export function installFakeApi() {
       }
       if (route.startsWith('POST')) return sharePeople(artifactId, body);
       return json(200, { access: accessOf(artifactId) });
+    }
+    const summaryMatch = SUMMARY_ROUTE.exec(route);
+    if (summaryMatch) {
+      if (!signedIn) return error(401, ErrorCode.UNAUTHENTICATED, 'Please log in.');
+      const [, method, id = '', query = ''] = summaryMatch;
+      return feedbackSummary(method!, decodeURIComponent(id), new URLSearchParams(query));
     }
     const commentsMatch = COMMENTS_ROUTE.exec(route);
     if (commentsMatch) {
@@ -698,6 +781,20 @@ export function installFakeApi() {
     },
     setMaxArtifactBytes(bytes: number) {
       maxArtifactBytes = bytes;
+    },
+    /** Turns AI on (`features.ai`), answering natural-language searches with `answer`. */
+    enableAi(answer: (q: string, scope: string) => SearchInterpretation = keywordSearch) {
+      aiEnabled = true;
+      interpret = answer;
+    },
+    interpretRequests,
+    /** What summarizing feedback writes from now on; an error makes it fail. */
+    summarizeWith(content: FeedbackSummaryContent | Error) {
+      summaryContent = content;
+    },
+    /** How many summaries were written. */
+    get summarizeCount() {
+      return summarizeCount;
     },
     /** The next PATCH of an artifact fails with this error instead of succeeding. */
     failNextUpdate(status: number, code: ErrorCode, message: string, details?: unknown) {

@@ -11,7 +11,7 @@ import { Pagination } from '@/components/pagination.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { ArtifactCard } from '@/features/artifacts/artifact-card.tsx';
 import type { GalleryFilters as Filters } from '@/features/artifacts/artifacts.types.ts';
-import { GalleryFilters } from '@/features/artifacts/gallery-filters.tsx';
+import { GalleryFilters, hasFilters } from '@/features/artifacts/gallery-filters.tsx';
 import { PublishDialog } from '@/features/artifacts/publish-dialog.tsx';
 import { useArtifactList } from '@/features/artifacts/use-artifacts.ts';
 import { InlineError, InlineLoading } from '@/components/inline-status.tsx';
@@ -39,15 +39,21 @@ function useGalleryParams(): Filters & { page: number } {
     q: parse(shape.q, 'q'),
     type: parse(shape.type, 'type'),
     tag: parse(shape.tag, 'tag'),
+    owner: parse(shape.owner, 'owner'),
+    updatedFrom: parse(shape.updatedFrom, 'updatedFrom'),
+    updatedTo: parse(shape.updatedTo, 'updatedTo'),
     page: Number.isInteger(page) && page >= 1 ? page : 1,
   };
 }
 
 /** The gallery URL for these filters and page, leaving defaults out. */
-function galleryHref({ scope, q, type, tag }: Filters, page = 1): string {
+function galleryHref(
+  { scope, q, type, tag, owner, updatedFrom, updatedTo }: Filters,
+  page = 1,
+): string {
   const query = new URLSearchParams();
   if (scope !== 'mine') query.set('scope', scope);
-  for (const [key, value] of Object.entries({ q, type, tag })) {
+  for (const [key, value] of Object.entries({ q, type, tag, owner, updatedFrom, updatedTo })) {
     if (value) query.set(key, value);
   }
   if (page > 1) query.set('page', String(page));
@@ -69,7 +75,7 @@ export function GalleryPage() {
     page,
     pageSize,
   });
-  const filtered = Boolean(filters.q || filters.type || filters.tag);
+  const filtered = hasFilters(filters);
   // New filters start from the first page, without piling up history while typing.
   const applyFilters = (next: Filters) => void navigate(galleryHref(next), { replace: true });
 

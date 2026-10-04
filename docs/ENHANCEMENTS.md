@@ -56,6 +56,16 @@ Known limitations of the current build, and planned improvements.
 - Server-generated thumbnails.
 - Stream the local driver's file listing (`opendir` with `recursive: true`): today `list` and `deleteIncompleteWrites` read the whole tree into memory before the sweeper checks the first file. Fine for thousands of files, not for hundreds of thousands. Object storage's paged listing (and lifecycle rules) replaces it at real scale.
 
+## AI
+- Implement the `openai` `AiProvider` (stubbed like the s3/azure storage drivers): one class with structured output from the zod schema. Prompts, validation, retries and the circuit breaker are shared.
+- Link a summary's themes to their comments in the thread list (the ids are in the response; the tab shows how many).
+- A summary marked outdated is still returned, so it can mention a comment deleted since. Hiding outdated summaries after a delete (or regenerating them in the background) would close that.
+- Two simultaneous requests to summarize the same comments both call the model; the later one is saved. A per-key lock (advisory lock or an in-progress row) would make it one call.
+- Dates in search filters are UTC days. Sending the browser's time zone with the search (and filtering in it) would make "yesterday" exact for everyone.
+- The gallery has no "everything I can see" tab, so a search for someone's artifacts picks *Shared with me* or *Company*; one could be in either. An *All* scope (as MCP has) would fix that.
+- Server-side refusal fallbacks (the Messages API `fallbacks` parameter) aren't sent, since the models are configurable and not all accept it; a refusal falls back like any other AI failure.
+- The circuit breaker and rate limits live in the process (one replica), like the other rate limits.
+
 ## Platform
 - Horizontal scaling (requires object storage instead of a local volume, and a real job queue).
 - Notifications (email/Slack) for new comments, shares and new versions.

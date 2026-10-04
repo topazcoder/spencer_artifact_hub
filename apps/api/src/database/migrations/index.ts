@@ -9,6 +9,7 @@ import { CreateComments1791700000000 } from './1791700000000-CreateComments.js';
 import { CreateApiTokens1791800000000 } from './1791800000000-CreateApiTokens.js';
 import { CreateUploadSessions1791900000000 } from './1791900000000-CreateUploadSessions.js';
 import { CreateIdempotencyKeys1792000000000 } from './1792000000000-CreateIdempotencyKeys.js';
+import { CreateFeedbackSummaries1792100000000 } from './1792100000000-CreateFeedbackSummaries.js';
 
 /**
  * Every migration, in order. Listed explicitly (not globbed) so the same list works from
@@ -26,4 +27,5 @@ export const migrations = [
   CreateApiTokens1791800000000,
   CreateUploadSessions1791900000000,
   CreateIdempotencyKeys1792000000000,
+  CreateFeedbackSummaries1792100000000,
 ];

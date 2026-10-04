@@ -109,12 +109,15 @@ export class ArtifactsController {
     @CurrentActor() actor: Actor,
     @Query(new ZodValidationPipe(artifactListQuerySchema)) query: ArtifactListQuery,
   ): Promise<ArtifactListResponse> {
-    const { scope, q, type, tag, page, pageSize } = query;
+    const { scope, q, type, tag, owner, updatedFrom, updatedTo, page, pageSize } = query;
     const { items, total } = await this.artifacts.list(actor, {
       ...SCOPE_FILTERS[scope](actor),
       search: q,
       mimeTypes: type ? ARTIFACT_TYPE_FILTERS[type] : undefined,
       tag,
+      owner,
+      updatedFrom,
+      updatedTo,
       page,
       pageSize,
     });

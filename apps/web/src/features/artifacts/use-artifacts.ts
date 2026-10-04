@@ -20,6 +20,7 @@ import {
   fetchArtifacts,
   fetchArtifactTags,
   fetchArtifactVersions,
+  interpretSearch,
   publishArtifact,
   publishVersion,
   updateArtifact,
@@ -41,6 +42,14 @@ export function useArtifactList(params: ArtifactListParams) {
     queryFn: ({ signal }) => fetchArtifacts(params, signal),
     // Keep showing the current page while the next one loads.
     placeholderData: keepPreviousData,
+  });
+}
+
+/** Turns a search typed in plain language into gallery filters (never fails because of AI). */
+export function useInterpretSearch() {
+  return useMutation({
+    mutationFn: ({ q, scope }: { q: string; scope: ArtifactListScope }) =>
+      interpretSearch(q, scope),
   });
 }
 

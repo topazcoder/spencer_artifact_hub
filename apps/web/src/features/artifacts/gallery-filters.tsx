@@ -4,16 +4,26 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { NativeSelect } from '@/components/ui/native-select.tsx';
+import { useAppConfig } from '@/features/config/use-app-config.ts';
+import { formatUpdatedRange } from '@/lib/format.ts';
 import { TYPE_FILTER_LABELS } from './artifact-types.ts';
 import type { GalleryFilters as Filters } from './artifacts.types.ts';
+import { AiSearchDialog } from './ai-search-dialog.tsx';
 import { useArtifactTags } from './use-artifacts.ts';
 
 const TYPE_FILTERS = Object.keys(ARTIFACT_TYPE_FILTERS) as ArtifactTypeFilter[];
 const SEARCH_DELAY_MS = 300;
 
+/** Whether `filters` narrow their scope at all. */
+export function hasFilters({ q, type, tag, owner, updatedFrom, updatedTo }: Filters): boolean {
+  return Boolean(q || type || tag || owner || updatedFrom || updatedTo);
+}
+
 /**
  * Search box, type and tag filters for a gallery scope. A search applies once typing pauses,
- * the other filters at once; every change goes through `onChange` (which puts it in the URL).
+ * the other filters at once (Enter applies a search at once too); every change goes through
+ * `onChange` (which puts it in the URL). With AI, *AI search* replaces the filters with what a
+ * description asks for; owner and dates show as removable chips.
  */
 export function GalleryFilters({
   filters,
@@ -31,6 +41,8 @@ export function GalleryFilters({
   const [shownQ, setShownQ] = useState(filters.q);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const { data: tags } = useArtifactTags(filters.scope);
+  const { data: config } = useAppConfig();
+  const smart = config?.features.ai ?? false;
 
   // The URL's search changed elsewhere (Clear filters, the back button): show it.
   if (filters.q !== shownQ) {
@@ -53,7 +65,20 @@ export function GalleryFilters({
     timer.current = setTimeout(() => apply({}, value), SEARCH_DELAY_MS);
   };
 
-  const active = Boolean(filters.q || filters.type || filters.tag);
+  /** Filters from an AI search, replacing the current ones. */
+  const applySearch = (found: Filters) => {
+    clearTimeout(timer.current);
+    setPending(false);
+    setText(found.q ?? '');
+    onChange(found);
+  };
+
+  const active = hasFilters(filters);
+  const updated = formatUpdatedRange(filters.updatedFrom, filters.updatedTo);
+  const chips = [
+    filters.owner ? { label: `By ${filters.owner}`, clear: { owner: undefined } } : null,
+    updated ? { label: updated, clear: { updatedFrom: undefined, updatedTo: undefined } } : null,
+  ].filter((chip) => chip !== null);
   const tagOptions = tags?.map((item) => item.tag) ?? [];
   // A tag from the URL stays selectable even if it isn't among the most used.
   if (filters.tag && !tagOptions.includes(filters.tag)) tagOptions.unshift(filters.tag);
@@ -79,8 +104,14 @@ export function GalleryFilters({
           className="pl-8"
           value={text}
           onChange={(event) => onType(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            apply({});
+          }}
         />
       </div>
+      {smart ? <AiSearchDialog scope={filters.scope} onSearch={applySearch} /> : null}
       <NativeSelect
         aria-label="Type"
         value={filters.type ?? ''}
@@ -105,6 +136,18 @@ export function GalleryFilters({
           </option>
         ))}
       </NativeSelect>
+      {chips.map(({ label, clear }) => (
+        <Button
+          key={label}
+          variant="secondary"
+          size="sm"
+          aria-label={`Remove filter: ${label}`}
+          onClick={() => apply(clear)}
+        >
+          {label}
+          <XIcon aria-hidden="true" />
+        </Button>
+      ))}
       {active ? (
         <Button
           variant="ghost"

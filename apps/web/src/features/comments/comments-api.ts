@@ -4,6 +4,8 @@ import {
   commentListResponseSchema,
   commentResponseSchema,
   type CreateCommentRequest,
+  type FeedbackSummaryResponse,
+  feedbackSummaryResponseSchema,
   type UpdateCommentRequest,
 } from '@artifact-hub/shared';
 import { artifactQueryKey } from '@/features/artifacts/artifacts-api.ts';
@@ -15,6 +17,13 @@ export const commentsQueryKey = (artifactId: string) =>
 /** One version's threads, or every version's (`versionNo` null). */
 export const commentThreadsQueryKey = (artifactId: string, versionNo: number | null) =>
   [...commentsQueryKey(artifactId), versionNo ?? 'all'] as const;
+
+/**
+ * The AI summary of one version's comments, or every version's (`versionNo` null). Under the
+ * comments' key, so a change to the comments refreshes whether it is outdated.
+ */
+export const feedbackSummaryQueryKey = (artifactId: string, versionNo: number | null) =>
+  [...commentsQueryKey(artifactId), 'summary', versionNo ?? 'all'] as const;
 
 const commentsPath = (artifactId: string) =>
   `/artifacts/${encodeURIComponent(artifactId)}/comments`;
@@ -68,4 +77,32 @@ export async function updateComment(
 /** A deleted top-level comment takes its replies with it. Author only. */
 export async function deleteComment(commentId: string): Promise<void> {
   await apiRequest(commentPath(commentId), { method: 'DELETE' });
+}
+
+const summaryPath = (artifactId: string, versionNo: number | null) =>
+  `/artifacts/${encodeURIComponent(artifactId)}/feedback-summary${
+    versionNo === null ? '' : `?${new URLSearchParams({ version: String(versionNo) })}`
+  }`;
+
+/** The saved summary, if any, and whether comments changed since. */
+export function fetchFeedbackSummary(
+  artifactId: string,
+  versionNo: number | null,
+  signal?: AbortSignal,
+): Promise<FeedbackSummaryResponse> {
+  return apiRequest(summaryPath(artifactId, versionNo), {
+    schema: feedbackSummaryResponseSchema,
+    signal,
+  });
+}
+
+/** Summarizes now (the saved summary if it is up to date). `AI_UNAVAILABLE` when AI fails. */
+export function summarizeFeedback(
+  artifactId: string,
+  versionNo: number | null,
+): Promise<FeedbackSummaryResponse> {
+  return apiRequest(summaryPath(artifactId, versionNo), {
+    method: 'POST',
+    schema: feedbackSummaryResponseSchema,
+  });
 }

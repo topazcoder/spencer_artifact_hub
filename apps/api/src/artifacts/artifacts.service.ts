@@ -26,6 +26,7 @@ import {
 import type { AccessAction, AccessGrant, AccessTarget } from '../access/access.types.js';
 import type { Actor } from '../auth/auth.types.js';
 import { AppError } from '../common/errors/app-error.js';
+import { escapeLike } from '../database/escape-like.js';
 import { blobKeys } from '../storage/blob-keys.js';
 import { InjectStorage } from '../storage/storage.module.js';
 import type { StorageDriver } from '../storage/storage.types.js';
@@ -400,6 +401,26 @@ export class ArtifactsService {
     }
     if (filters.tag) {
       qb.andWhere('artifact.tags @> ARRAY[:tag]::text[]', { tag: filters.tag });
+    }
+    if (filters.owner) {
+      // Only narrows what the actor can already see, whose owners' names are shown on it.
+      qb.andWhere(
+        `EXISTS (SELECT 1 FROM users owner_filter
+                 WHERE owner_filter.id = artifact.owner_id
+                   AND (owner_filter.display_name ILIKE :ownerPattern
+                        OR owner_filter.email = :ownerEmail))`,
+        { ownerPattern: `%${escapeLike(filters.owner)}%`, ownerEmail: filters.owner },
+      );
+    }
+    if (filters.updatedFrom) {
+      qb.andWhere(`artifact.updatedAt >= (CAST(:updatedFrom AS date) AT TIME ZONE 'UTC')`, {
+        updatedFrom: filters.updatedFrom,
+      });
+    }
+    if (filters.updatedTo) {
+      qb.andWhere(`artifact.updatedAt < ((CAST(:updatedTo AS date) + 1) AT TIME ZONE 'UTC')`, {
+        updatedTo: filters.updatedTo,
+      });
     }
     const tsquery = filters.search ? prefixTsquery(filters.search) : null;
     if (tsquery) {

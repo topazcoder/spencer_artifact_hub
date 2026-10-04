@@ -75,6 +75,8 @@ describe('App (e2e)', () => {
       const res = await request(app.getHttpServer()).get('/api/config').expect(200);
       expect(appConfigSchema.parse(res.body)).toEqual({
         maxArtifactBytes: testEnv.MAX_ARTIFACT_BYTES,
+        // The test environment has no API key.
+        features: { ai: false },
       });
     });
   });

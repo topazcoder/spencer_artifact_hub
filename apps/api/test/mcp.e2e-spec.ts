@@ -198,6 +198,30 @@ describe('MCP server (e2e)', () => {
       expect(shared.data.items.map((item) => item.id)).toEqual([pricing]);
     });
 
+    it('narrows by owner and by the day it was last updated, as the agent works them out', async () => {
+      const bobClient = await connect(bob);
+      const byAda = await call(bobClient, 'find_artifacts', { tag: runTag, owner: 'ad' });
+      expect(byAda.data.items.map((item) => item.id)).toEqual([pricing]);
+      const byEmail = await call(bobClient, 'find_artifacts', { tag: runTag, owner: ada.email });
+      expect(byEmail.data.total).toBe(1);
+      const byCarol = await call(bobClient, 'find_artifacts', { tag: runTag, owner: 'Carol' });
+      expect(byCarol.data.total).toBe(0);
+
+      const today = new Date().toISOString().slice(0, 10);
+      const recent = await call(bobClient, 'find_artifacts', {
+        tag: runTag,
+        updated_from: today,
+        updated_to: today,
+      });
+      expect(recent.data.total).toBe(1);
+      const older = await call(bobClient, 'find_artifacts', {
+        tag: runTag,
+        updated_to: '2020-01-01',
+      });
+      expect(older.data.total).toBe(0);
+      expect(older.data.next_actions).toEqual([expect.stringMatching(/drop some filters/)]);
+    });
+
     it("never shows what the user can't see", async () => {
       const { data } = await call(await connect(carol), 'find_artifacts', { tag: runTag });
       expect(data).toMatchObject({ total: 0, items: [] });

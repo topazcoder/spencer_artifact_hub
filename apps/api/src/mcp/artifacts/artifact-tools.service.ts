@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   ARTIFACT_LIST_MAX_PAGE,
+  ARTIFACT_OWNER_FILTER_MAX_LENGTH,
   ARTIFACT_SEARCH_MAX_LENGTH,
   ARTIFACT_TAG_MAX_LENGTH,
   ARTIFACT_TYPE_FILTERS,
@@ -69,7 +70,7 @@ export class ArtifactToolsService implements McpToolProvider {
       name: 'find_artifacts',
       title: 'Find artifacts',
       description:
-        'Search the artifacts the user can see: mockups, reports, decks, diagrams and docs published by them or shared with them. Use it when the user asks to find, list or look up artifacts ("find the pricing mockup", "what did I publish?", "what has been shared with me?"), or to get an id before calling another tool. Results are the most relevant first when there is a query, otherwise the most recently updated.',
+        'Search the artifacts the user can see: mockups, reports, decks, diagrams and docs published by them or shared with them. Use it when the user asks to find, list or look up artifacts ("find the pricing mockup Sara shared last week", "what did I publish?", "what has been shared with me?"), or to get an id before calling another tool. Turn the request into filters: keywords in query, the person in owner, dates in updated_from / updated_to, and scope, type and tag. Results are the most relevant first when there is a query, otherwise the most recently updated.',
       inputSchema: {
         query: z
           .string()
@@ -77,7 +78,7 @@ export class ArtifactToolsService implements McpToolProvider {
           .max(ARTIFACT_SEARCH_MAX_LENGTH)
           .optional()
           .describe(
-            'A few keywords, e.g. "pricing mockup". Every word must match a word (or the start of one) in the title, tags, description or content, so leave out people\'s names, dates and filler words, and narrow with scope, type and tag instead. Omit to list the most recently updated.',
+            'A few keywords, e.g. "pricing mockup". Every word must match a word (or the start of one) in the title, tags, description or content, so leave out filler words, and put people, dates, types and tags in their own filters instead. Omit to list the most recently updated.',
           ),
         scope: z
           .enum(SCOPES)
@@ -94,6 +95,25 @@ export class ArtifactToolsService implements McpToolProvider {
           .max(ARTIFACT_TAG_MAX_LENGTH)
           .optional()
           .describe('Only artifacts with this tag.'),
+        owner: z
+          .string()
+          .trim()
+          .min(1)
+          .max(ARTIFACT_OWNER_FILTER_MAX_LENGTH)
+          .optional()
+          .describe(
+            'Only artifacts published by this person: part of their name (e.g. "Sara"), or their exact email. For the user\'s own artifacts, use scope: mine instead.',
+          ),
+        updated_from: z.iso
+          .date()
+          .optional()
+          .describe(
+            'Only artifacts last updated on or after this day, YYYY-MM-DD (UTC). Work it out from the current date for requests like "last week".',
+          ),
+        updated_to: z.iso
+          .date()
+          .optional()
+          .describe('Only artifacts last updated on or before this day, YYYY-MM-DD (UTC).'),
         page: z
           .number()
           .int()
@@ -103,12 +123,16 @@ export class ArtifactToolsService implements McpToolProvider {
           .describe(`Page of ${PAGE_SIZE} results, from 1.`),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
-      handler: async (actor, { query, scope, type, tag, page }) => {
+      handler: async (actor, input) => {
+        const { query, scope, type, tag, owner, page } = input;
         const { items, total } = await this.artifacts.list(actor, {
           ...SCOPE_FILTERS[scope](actor),
           search: query || undefined,
           mimeTypes: type ? ARTIFACT_TYPE_FILTERS[type] : undefined,
           tag,
+          owner,
+          updatedFrom: input.updated_from,
+          updatedTo: input.updated_to,
           page,
           pageSize: PAGE_SIZE,
         });
@@ -116,7 +140,9 @@ export class ArtifactToolsService implements McpToolProvider {
           total,
           page,
           scope,
-          filtered: Boolean(query || type || tag),
+          filtered: Boolean(
+            query || type || tag || owner || input.updated_from || input.updated_to,
+          ),
         });
       },
     });
@@ -201,7 +227,7 @@ export class ArtifactToolsService implements McpToolProvider {
         total === 0
           ? [
               filtered
-                ? `Try fewer or different keywords, or drop the type and tag filters${scope === 'all' ? '' : ', or use scope: all'}.`
+                ? `Try fewer or different keywords, or drop some filters (type, tag, owner, dates)${scope === 'all' ? '' : ', or use scope: all'}.`
                 : EMPTY_SCOPE_HINTS[scope],
             ]
           : [

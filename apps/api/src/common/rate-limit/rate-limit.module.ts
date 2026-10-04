@@ -9,6 +9,7 @@ export const LOGIN_EMAIL_THROTTLER = 'login-email';
 export const USER_SEARCH_THROTTLER = 'user-search';
 export const SHARE_LINK_THROTTLER = 'share-link';
 export const API_TOKEN_THROTTLER = 'api-token';
+export const AI_THROTTLER = 'ai';
 
 const THROTTLERS = [
   LOGIN_IP_THROTTLER,
@@ -16,6 +17,7 @@ const THROTTLERS = [
   USER_SEARCH_THROTTLER,
   SHARE_LINK_THROTTLER,
   API_TOKEN_THROTTLER,
+  AI_THROTTLER,
 ] as const;
 
 type ThrottlerName = (typeof THROTTLERS)[number];
@@ -80,6 +82,12 @@ function userTracker(req: Record<string, unknown>): string {
               name: API_TOKEN_THROTTLER,
               ttl: seconds(60),
               limit: env.RATE_LIMIT_API_TOKEN_PER_MINUTE,
+              getTracker: userTracker,
+            },
+            {
+              name: AI_THROTTLER,
+              ttl: seconds(60),
+              limit: env.RATE_LIMIT_AI_PER_MINUTE,
               getTracker: userTracker,
             },
           ],

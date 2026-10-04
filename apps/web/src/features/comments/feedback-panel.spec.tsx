@@ -24,6 +24,11 @@ function open(item: Artifact, path = '') {
 }
 
 const thread = (author: string) => screen.findByRole('article', { name: `Comment by ${author}` });
+/** Opens the feedback summary dialog. */
+async function openSummary(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: 'Summarize feedback' }));
+  return screen.findByRole('dialog', { name: 'Feedback summary' });
+}
 
 describe('Feedback tab', () => {
   let api: ReturnType<typeof installFakeApi>;
@@ -310,5 +315,110 @@ describe('Feedback tab', () => {
 
     await waitFor(() => expect(screen.queryByText('Soon gone elsewhere')).toBeNull());
     expect(await screen.findByText('No comments on v2 yet.')).toBeTruthy();
+  });
+
+  describe('AI summary', () => {
+    it('opens in a dialog, writing a summary of the comments shown', async () => {
+      api.enableAi();
+      const item = artifactWithVersions();
+      const header = api.addComment(item.id, grace, 'The header is too big');
+      api.summarizeWith({
+        overview: 'Reviewers want a smaller header.',
+        themes: [
+          {
+            title: 'Header size',
+            summary: 'It takes too much room.',
+            sentiment: 'negative',
+            status: 'open',
+            commentIds: [header],
+          },
+        ],
+        disagreements: [{ topic: 'Colors', summary: 'Blue or green.', commentIds: [] }],
+      });
+      const { user } = open(item);
+
+      const dialog = await openSummary(user);
+      expect(within(dialog).getByText('The comments on version 2.')).toBeTruthy();
+      expect(await within(dialog).findByText('Reviewers want a smaller header.')).toBeTruthy();
+      const theme = within(within(dialog).getByRole('list', { name: 'Themes' })).getByRole(
+        'listitem',
+      );
+      expect(theme.textContent).toBe(
+        'Header sizeOpenConcernsIt takes too much room.From 1 comment',
+      );
+      expect(within(dialog).getByText('Colors:')).toBeTruthy();
+      expect(within(dialog).getByText(/^Written by AI just now from 1 comment\./)).toBeTruthy();
+      expect(within(dialog).queryByRole('button', { name: 'Refresh' })).toBeNull();
+    });
+
+    it('shows the saved summary again, outdated once comments change, and writes it again', async () => {
+      api.enableAi();
+      const item = artifactWithVersions();
+      api.addComment(item.id, grace, 'The header is too big');
+      const { user } = open(item);
+      await within(await openSummary(user)).findByText('Reviewers like it overall.');
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+      // Saved: opening it again writes nothing new.
+      await within(await openSummary(user)).findByText('Reviewers like it overall.');
+      expect(api.summarizeCount).toBe(1);
+      await user.keyboard('{Escape}');
+
+      await user.type(screen.getByRole('textbox', { name: 'Add a comment' }), 'Agreed');
+      await user.click(screen.getByRole('button', { name: 'Comment' }));
+      await thread('Ada Lovelace');
+      const dialog = await openSummary(user);
+      expect(await within(dialog).findByText('Outdated')).toBeTruthy();
+      await user.click(within(dialog).getByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(within(dialog).queryByText('Outdated')).toBeNull());
+      expect(within(dialog).getByText(/from 2 comments/)).toBeTruthy();
+      expect(api.summarizeCount).toBe(2);
+    });
+
+    it('follows the version filter', async () => {
+      api.enableAi();
+      const item = artifactWithVersions();
+      api.addComment(item.id, grace, 'On v2');
+      const { user } = open(item);
+      await within(await openSummary(user)).findByText('Reviewers like it overall.');
+      await user.keyboard('{Escape}');
+
+      await user.click(screen.getByRole('button', { name: 'All versions' }));
+      const dialog = await openSummary(user);
+      expect(within(dialog).getByText('The comments on every version you can see.')).toBeTruthy();
+      await within(dialog).findByText('Reviewers like it overall.');
+      expect(api.summarizeCount).toBe(2);
+    });
+
+    it('says when it could not summarize, and can try again', async () => {
+      api.enableAi();
+      api.summarizeWith(new Error("Couldn't summarize the feedback right now."));
+      const item = artifactWithVersions();
+      api.addComment(item.id, grace, 'Hello');
+      const { user } = open(item);
+
+      const dialog = await openSummary(user);
+      expect((await within(dialog).findByRole('alert')).textContent).toBe(
+        "Couldn't summarize the feedback right now.",
+      );
+      api.summarizeWith({ overview: 'Now it works.', themes: [], disagreements: [] });
+      await user.click(within(dialog).getByRole('button', { name: 'Try again' }));
+      expect(await within(dialog).findByText('Now it works.')).toBeTruthy();
+    });
+
+    it('is not offered without AI, nor without comments', async () => {
+      const item = artifactWithVersions();
+      api.addComment(item.id, grace, 'Hello');
+      open(item);
+      await thread('Grace Hopper');
+      expect(screen.queryByRole('button', { name: 'Summarize feedback' })).toBeNull();
+      cleanup();
+
+      api.enableAi();
+      open(artifactWithVersions());
+      expect(await screen.findByText('No comments on v2 yet.')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Summarize feedback' })).toBeNull();
+    });
   });
 });
