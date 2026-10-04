@@ -20,8 +20,11 @@ export type RequestAuth =
 declare global {
   namespace Express {
     interface Request {
-      /** Set by `AuthGuard` on authenticated routes. */
-      auth?: RequestAuth;
+      /**
+       * Set by `AuthGuard` on authenticated routes. Not `auth`: the MCP SDK reads that as its
+       * own `AuthInfo`.
+       */
+      authentication?: RequestAuth;
     }
   }
 }

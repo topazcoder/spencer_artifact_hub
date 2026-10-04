@@ -14,7 +14,7 @@ const DEFAULT_SCHEMES: AuthScheme[] = ['session'];
 
 /**
  * Global guard: every route requires credentials unless marked `@Public()`. A session by
- * default; `@Auth(...)` names others. Sets `req.auth` and adds the user to the request's log
+ * default; `@Auth(...)` names others. Sets `req.authentication` and adds the user to the request's log
  * lines. Fails closed: other transports, and schemes nobody registered, are errors.
  */
 @Injectable()
@@ -56,7 +56,7 @@ export class AuthGuard implements CanActivate {
     for (const authenticator of accepted) {
       const auth = await authenticator.authenticate(req, res);
       if (!auth) continue;
-      req.auth = auth;
+      req.authentication = auth;
       this.logger.assign({
         userId: auth.actor.userId,
         ...(auth.scheme === 'api_token' ? { tokenId: auth.apiTokenId } : {}),

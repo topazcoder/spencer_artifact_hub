@@ -11,5 +11,6 @@ import { CommentsService } from './comments.service.js';
   imports: [TypeOrmModule.forFeature([Comment, ArtifactVersion]), AccessModule, ArtifactsModule],
   controllers: [CommentsController],
   providers: [CommentsService],
+  exports: [CommentsService],
 })
 export class CommentsModule {}

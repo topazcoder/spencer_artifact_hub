@@ -26,7 +26,7 @@ export const Auth = (...schemes: [AuthScheme, ...AuthScheme[]]) =>
 
 /** The authenticated `Actor`. Only valid on routes that are not `@Public()`. */
 export const CurrentActor = createParamDecorator((_data: unknown, ctx: ExecutionContext): Actor => {
-  const actor = ctx.switchToHttp().getRequest<Request>().auth?.actor;
+  const actor = ctx.switchToHttp().getRequest<Request>().authentication?.actor;
   if (!actor) throw new Error('@CurrentActor() used on a route that is not authenticated');
   return actor;
 });

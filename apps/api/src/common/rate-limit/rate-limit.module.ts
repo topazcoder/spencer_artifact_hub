@@ -41,8 +41,8 @@ function emailTracker(req: Record<string, unknown>): string {
 
 /** Counts per signed-in user (the global `AuthGuard` runs first), falling back to the IP. */
 function userTracker(req: Record<string, unknown>): string {
-  const { auth, ip } = req as unknown as Request;
-  return auth ? `user:${auth.actor.userId}` : `ip:${ip}`;
+  const { authentication, ip } = req as unknown as Request;
+  return authentication ? `user:${authentication.actor.userId}` : `ip:${ip}`;
 }
 
 /**

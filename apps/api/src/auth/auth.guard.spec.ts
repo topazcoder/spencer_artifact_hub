@@ -62,14 +62,17 @@ describe('AuthGuard', () => {
     expect(session.authenticate).not.toHaveBeenCalled();
   });
 
-  it('requires a session by default, and sets req.auth and the log context', async () => {
+  it('requires a session by default, and sets req.authentication and the log context', async () => {
     const session = authenticator('session', { userId: 'u1' });
     const token = authenticator('api_token', { userId: 'u2' });
     const { guard, logger } = guardWith(session, token);
     const req: Partial<Request> = {};
 
     await expect(guard.canActivate(contextFor('default', req))).resolves.toBe(true);
-    expect(req.auth).toMatchObject({ scheme: 'session', actor: { userId: 'u1', via: 'web' } });
+    expect(req.authentication).toMatchObject({
+      scheme: 'session',
+      actor: { userId: 'u1', via: 'web' },
+    });
     expect(logger.assign).toHaveBeenCalledWith({ userId: 'u1' });
     expect(token.authenticate).not.toHaveBeenCalled();
   });
@@ -89,7 +92,7 @@ describe('AuthGuard', () => {
     );
     const req: Partial<Request> = {};
     await expect(guard.canActivate(contextFor('either', req))).resolves.toBe(true);
-    expect(req.auth).toMatchObject({ scheme: 'api_token', actor: { via: 'mcp' } });
+    expect(req.authentication).toMatchObject({ scheme: 'api_token', actor: { via: 'mcp' } });
     expect(logger.assign).toHaveBeenCalledWith({ userId: 'u2', tokenId: 't1' });
   });
 

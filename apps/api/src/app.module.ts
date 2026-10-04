@@ -14,6 +14,7 @@ import { ConfigModule } from './config/config.module.js';
 import type { Env } from './config/config.types.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
+import { McpModule } from './mcp/mcp.module.js';
 import { SharingModule } from './sharing/sharing.module.js';
 import { WebModule } from './web/web.module.js';
 
@@ -35,6 +36,7 @@ export class AppModule {
         ArtifactsModule,
         SharingModule,
         CommentsModule,
+        McpModule,
         ClientConfigModule,
         HealthModule,
         WebModule.register(env.WEB_DIST_DIR),

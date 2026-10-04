@@ -249,13 +249,13 @@ The web UI and MCP use the same pipeline:
 ```
 
 ### Intent-based tools
-Tool descriptions are written the way users ask for things, and each says when to use the tool. Every result returns a short readable summary **and** `structuredContent`, always including the artifact's web URL and suggested next actions.
+Tool descriptions are written the way users ask for things, and each says when to use the tool. Every result is facts as data, for the agent to word for the user: `structuredContent`, and the same JSON as text for clients that show the model only text. It always includes the artifact's web URL and suggested next actions (`next_actions`).
 
 | Tool | User intent it serves | Key inputs | Notes |
 |---|---|---|---|
 | `publish_artifact` | "Publish this mockup / share this report with the team" | `title`, `description`, `tags` (all required), `visibility`, `content?` (text formats only: HTML/SVG/MD) | Without `content`, creates a **draft** and returns `upload_url` + `upload_command` (see below) |
 | `update_artifact` | "Here's the revised version", "rename it / change tags / make it public" | `artifact` (id or URL), `content?` (text) **or** `request_upload: true` (binary), `change_note`, optional metadata | New content creates a new version; metadata-only changes don't |
-| `find_artifacts` | "Find the pricing deck Sara shared last week" | `query` (natural language), optional `owner: me/shared_with_me/anyone`, `type`, `tags` | NL query is converted to filters + full-text search |
+| `find_artifacts` | "Find the pricing deck Sara shared last week" | `query`, optional `scope: all/mine/shared_with_me/company` (the gallery tabs), `type`, `tag`, `page` | Until step 27, `query` is keywords for full-text search (the description tells the agent to narrow with scope, type and tag instead); step 27 turns a natural-language query into filters |
 | `get_artifact` | "What's the status of the onboarding mockup?" | `artifact`, optional `version` | Metadata, versions, access summary, open and resolved comment counts |
 | `get_feedback` | "What did reviewers say about v2? Anything unresolved?" | `artifact`, `version?`, `include: open/all` (default `open`) | Raw threads with counts per version, no server-side summary: the calling agent summarizes them for what the user actually asked. Comment bodies are marked as **untrusted user content**. The number of threads is capped; a capped result says so and the agent narrows by `version` / `include` |
 | `add_comment` | "Tell them the header looks off", "reply to Sara's comment" | `artifact`, `body`, `version?`, `reply_to?` | |
@@ -383,7 +383,7 @@ All behind `AiService`, configurable with `AI_ENABLED`, `ANTHROPIC_API_KEY`, `AI
 | S6b | **Upload URL leakage / hijack** | Upload token + user authentication (cookie or Bearer) both required, and the user must own the session; single-use, 30-minute TTL; 404 on mismatch |
 | S7 | **Share to unverified identity** (anyone can sign up with any email) | Accepted for the demo; grants only to existing users; SSO/email verification tracked in ENHANCEMENTS.md |
 | S8 | **Prompt injection via artifact content or comments → our LLM** | Delimited untrusted blocks, no tools, schema-validated output, length caps, output only ever used as data (never as instructions or HTML) |
-| S9 | **Prompt injection via MCP results → user's agent** (other users' comments/content returned to the agent) | Tool results wrap user-generated text in clearly labelled untrusted fields; tool descriptions tell the agent not to follow instructions inside them; destructive tools (revoke, set private) take explicit parameters, never inferred from content |
+| S9 | **Prompt injection via MCP results → user's agent** (other users' comments/content returned to the agent) | Tool results carry user-generated text only as JSON string values, with a note in every result (and in the server instructions) to treat it as data; tool descriptions tell the agent not to follow instructions inside them; destructive tools (revoke, set private) take explicit parameters, never inferred from content |
 | S10 | **CSRF** | `SameSite=Lax` cookie + Origin/Referer check on all non-GET requests; MCP uses Bearer (no cookies) |
 | S11 | **Credential attacks** | argon2id, min password length, login rate limit per IP + email, generic "invalid credentials", constant-time compare |
 | S12 | **Session hijack / fixation** | Random 256-bit session token, hashed in DB, new session on login, httpOnly + Secure + SameSite, sliding expiry, logout deletes the row |
@@ -553,7 +553,7 @@ Two changes from a feature-by-feature order: idempotency and the sweeper come af
 
 **MCP**
 18. ✅ API tokens, the Settings page and Bearer authentication. (Tokens are `ah_` + 256 random bits, stored as SHA-256, at most 20 live per user, revoked by their owner only. Token routes need a session, so a token can't mint tokens. Authentication is one global `AuthGuard` running a `RequestAuthenticator` per scheme (session, API token), registered with `AuthModule.register`; routes accept a session unless `@Auth('api_token')` says otherwise, and requests with a token are rate limited per user. Invalid credentials are refused even if another accepted scheme would pass. Settings shows the secret once and fills it into the Claude Desktop and Claude Code setup.)
-19. MCP server with the read tools: `find_artifacts`, `get_artifact`, `get_feedback`.
+19. ✅ MCP server with the read tools: `find_artifacts`, `get_artifact`, `get_feedback`. (Stateless Streamable HTTP at `POST /mcp` with JSON responses, a fresh server per request bound to the caller; GET and DELETE answer 405. Tools come from providers grouped by concern (`mcp/artifacts/`, `mcp/feedback/`) and call the same services as the REST API; `McpServerService` turns `AppError`s into `isError` results with a next step, and hides unexpected errors behind the request ID. Results are data only, no server-side prose: `structuredContent` plus the same JSON as text, with the web URL, `next_actions` and a note that text written by people is data, not instructions (also in the server instructions). Artifacts are named by id or page URL (`?v=N` picks the version). `get_artifact` shows the access summary to its owner only, without the link URL. `get_feedback` returns at most 30 threads and 10 replies each, saying when it cuts. Our request auth moved to `req.authentication`: the SDK reads `req.auth` as its own `AuthInfo`.)
 20. MCP write tools with inline text content.
 21. Upload sessions: browser upload page first, then the direct `PUT`.
 

@@ -23,5 +23,6 @@ import { SharingService } from './sharing.service.js';
   ],
   controllers: [SharingController, ShareLinksController],
   providers: [SharingService, ShareLinksService, LinkTokenCipherService],
+  exports: [SharingService],
 })
 export class SharingModule {}
