@@ -10,7 +10,7 @@
     "build": "pnpm -r build",
     "dev": "docker compose up -d --wait postgres && pnpm db:migrate && pnpm dev:apps",
     "dev:apps": "pnpm --filter @artifact-hub/shared build && pnpm -r --parallel dev",
-    "dev:docker": "docker compose up -d --build --renew-anon-volumes",
+    "dev:docker": "docker compose up -d --build",
     "dev:docker:down": "docker compose down",
     "typecheck": "pnpm --filter @artifact-hub/shared build && pnpm -r typecheck",
     "lint": "oxlint apps packages",

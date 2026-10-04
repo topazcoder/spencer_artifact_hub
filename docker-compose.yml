@@ -1,6 +1,6 @@
 # Local development stack with hot reload: `pnpm dev:docker`.
 #   postgres  Postgres 16 on :5432 (also creates artifact_hub_test for the e2e suite)
-#   api       builds packages/shared, applies migrations, then runs NestJS and the shared
+#   api       syncs dependencies, builds packages/shared, applies migrations, then runs NestJS and the shared
 #             package in watch mode on :3000
 #   web       Vite dev server on :5173 (proxies /api and /mcp to the api service)
 # `docker compose up -d postgres` starts only the database, for `pnpm dev` on the host.
@@ -12,12 +12,13 @@ x-dev: &dev
   image: artifact-hub-dev
   volumes:
     - .:/app
-    # Keep the image's dependencies visible over the source mount. `pnpm dev:docker` passes
-    # --renew-anon-volumes so these are refreshed from the image after a lockfile change.
-    - /app/node_modules
-    - /app/apps/api/node_modules
-    - /app/apps/web/node_modules
-    - /app/packages/shared/node_modules
+    # Keep the image's dependencies visible over the source mount. Named, so they persist
+    # across restarts (an anonymous volume is orphaned on every recreate). Docker fills them
+    # from the image once; the api service's `pnpm install` brings them up to date after that.
+    - deps_root:/app/node_modules
+    - deps_api:/app/apps/api/node_modules
+    - deps_web:/app/apps/web/node_modules
+    - deps_shared:/app/packages/shared/node_modules
 
 services:
   postgres:
@@ -40,7 +41,8 @@ services:
   api:
     <<: *dev
     command: >
-      sh -c "pnpm --filter @artifact-hub/shared build &&
+      sh -c "pnpm install --frozen-lockfile &&
+             pnpm --filter @artifact-hub/shared build &&
              pnpm --filter @artifact-hub/api db:migrate &&
              pnpm --parallel --filter @artifact-hub/shared --filter @artifact-hub/api dev"
     environment:
@@ -75,3 +77,7 @@ services:
 
 volumes:
   pgdata:
+  deps_root:
+  deps_api:
+  deps_web:
+  deps_shared:
